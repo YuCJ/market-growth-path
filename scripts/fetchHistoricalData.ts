@@ -131,7 +131,7 @@ Do not mix different symbols or providers inside one canonical CSV. Create a new
 
   await writeFile(
     resolve(sourceDir, "AGENTS.md"),
-    `# VT Alpha Vantage Weekly Adjusted Snapshot
+    `# ${symbol} Alpha Vantage Weekly Adjusted Snapshot
 
 This directory contains a manually fetched Alpha Vantage \`TIME_SERIES_WEEKLY_ADJUSTED\` snapshot for \`${symbol}\`. The current snapshot covers ${startDate} through ${endDate} with ${rowCount} weekly rows.
 
@@ -144,11 +144,11 @@ Use \`adjusted_close\` as the total-return-like source value. This is an ETF adj
     resolve(canonicalDir, "AGENTS.md"),
     `# Canonical Market Series Notes
 
-\`${relativeToRepo(canonicalPath)}\` is derived from \`${relativeToRepo(sourcePath)}\`.
+Files in this directory are canonical app inputs derived from provider-normalized snapshots under \`data/sources/\`.
 
-The v1 canonical series rebases the source \`adjusted_close\` value to 100 at the first observation: \`total_return_index = source_value / first_source_value * 100\`.
+The v1 canonical series pattern rebases each source \`adjusted_close\` value to 100 at the first observation: \`total_return_index = source_value / first_source_value * 100\`.
 
-This dataset currently represents \`${symbol}\` as a global equity ETF adjusted-close proxy. If the project switches to IWDA, VTI, or another provider, create or rebuild a canonical file with the target symbol/provider clearly reflected in the filename.
+Each canonical file must keep one symbol/provider/frequency combination and clearly reflect that source in the filename and CSV metadata. ETF adjusted-close datasets are market proxies, not official total return indexes.
 `,
     "utf8",
   );
@@ -172,4 +172,3 @@ main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });
-

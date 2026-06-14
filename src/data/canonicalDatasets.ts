@@ -1,4 +1,5 @@
 import vtWeeklyCsv from "../../data/canonical/market-total-return-vt-weekly.v1.csv?raw";
+import iwdaLonWeeklyCsv from "../../data/canonical/market-total-return-iwda.lon-weekly.v1.csv?raw";
 import { parseCanonicalCsv, prepareMarketSeries } from "./canonicalCsv";
 
 export type CanonicalDataset = {
@@ -15,6 +16,13 @@ export const canonicalDatasets: CanonicalDataset[] = [
     description:
       "VT adjusted close rebased to 100, used as a global equity market growth proxy.",
     csv: vtWeeklyCsv,
+  },
+  {
+    id: "market-total-return-iwda-lon-weekly-v1",
+    name: "IWDA.LON weekly adjusted close proxy",
+    description:
+      "IWDA.LON adjusted close rebased to 100, used as a developed-market MSCI World ETF proxy.",
+    csv: iwdaLonWeeklyCsv,
   },
 ];
 

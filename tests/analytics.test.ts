@@ -90,10 +90,12 @@ describe("market growth analytics", () => {
     ).toThrow("total_return_index must be greater than 0");
   });
 
-  it("detects the current canonical VT dataset as weekly", () => {
-    const loaded = loadCanonicalDataset(canonicalDatasets[0]);
+  it("detects registered canonical datasets as weekly", () => {
+    const frequencies = canonicalDatasets.map(
+      (dataset) => loadCanonicalDataset(dataset).series.frequency,
+    );
 
-    expect(loaded.series.frequency).toBe("weekly");
+    expect(frequencies).toEqual(["weekly", "weekly"]);
   });
 
   it("widens forecast intervals with horizon and keeps 95% wider than 80%", () => {

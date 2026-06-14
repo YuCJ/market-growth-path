@@ -1,7 +1,7 @@
 # Canonical Market Series Notes
 
-`data/canonical/market-total-return-vt-weekly.v1.csv` is derived from `data/sources/alpha-vantage/VT/weekly-adjusted/2026-06-14.manual.csv`.
+Files in this directory are canonical app inputs derived from provider-normalized snapshots under `data/sources/`.
 
-The v1 canonical series rebases the source `adjusted_close` value to 100 at the first observation: `total_return_index = source_value / first_source_value * 100`.
+The v1 canonical series pattern rebases each source `adjusted_close` value to 100 at the first observation: `total_return_index = source_value / first_source_value * 100`.
 
-This dataset currently represents `VT` as a global equity ETF adjusted-close proxy. If the project switches to IWDA, VTI, or another provider, create or rebuild a canonical file with the target symbol/provider clearly reflected in the filename.
+Each canonical file must keep one symbol/provider/frequency combination and clearly reflect that source in the filename and CSV metadata. ETF adjusted-close datasets are market proxies, not official total return indexes.
