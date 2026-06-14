@@ -2,7 +2,7 @@ name: Update datasets
 
 on:
   schedule:
-    - cron: "30 6 * * 1"
+    - cron: "30 6 * * 2"
   workflow_dispatch:
 
 permissions:
@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   update:
+    timeout-minutes: 5
     name: Fetch weekly market datasets
     runs-on: ubuntu-latest
 
@@ -37,12 +38,32 @@ jobs:
           MARKET_DATA_SYMBOL: VT
           MARKET_DATA_SNAPSHOT_KIND: automated
 
+      - name: Alert on VT latest trend proximity
+        continue-on-error: true
+        timeout-minutes: 2
+        run: npm run data:alert:latest-trend
+        env:
+          MARKET_DATA_SYMBOL: VT
+          MARKET_TREND_ALERT_THRESHOLD_PERCENT: ${{ vars.MARKET_TREND_ALERT_THRESHOLD_PERCENT_VT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
       - name: Fetch IWDA.LON weekly data
         run: npm run data:fetch:history
         env:
           ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
           MARKET_DATA_SYMBOL: IWDA.LON
           MARKET_DATA_SNAPSHOT_KIND: automated
+
+      - name: Alert on IWDA.LON latest trend proximity
+        continue-on-error: true
+        timeout-minutes: 2
+        run: npm run data:alert:latest-trend
+        env:
+          MARKET_DATA_SYMBOL: IWDA.LON
+          MARKET_TREND_ALERT_THRESHOLD_PERCENT: ${{ vars.MARKET_TREND_ALERT_THRESHOLD_PERCENT_IWDA }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Validate
         run: npm test

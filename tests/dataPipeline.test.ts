@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import {
+  buildLatestTrendAlert,
+  parseAlertThresholdPercent,
+  shouldSendLatestTrendAlert,
+} from "../scripts/checkLatestTrendAlert";
 import { getUtcIsoWeekStartDate } from "../scripts/fetchHistoricalData";
 import { buildCanonicalSeries } from "../src/data/pipeline/buildCanonicalSeries";
 import { canonicalRowsToCsv, sourceRowsToCsv } from "../src/data/pipeline/csv";
@@ -114,6 +119,38 @@ describe("dataset snapshot cadence", () => {
     expect(getUtcIsoWeekStartDate(new Date("2026-06-14T23:59:59.999Z"))).toBe(
       "2026-06-08",
     );
+  });
+});
+
+describe("latest trend alert", () => {
+  it("alerts when latest actual index is near or below Model A trend", () => {
+    expect(shouldSendLatestTrendAlert(0.02, 2)).toBe(true);
+    expect(shouldSendLatestTrendAlert(0.0201, 2)).toBe(false);
+    expect(shouldSendLatestTrendAlert(-0.05, 2)).toBe(true);
+  });
+
+  it("defaults trend proximity threshold to 2 percent", () => {
+    expect(parseAlertThresholdPercent(undefined)).toBe(2);
+    expect(parseAlertThresholdPercent("")).toBe(2);
+    expect(parseAlertThresholdPercent("0")).toBe(0);
+  });
+
+  it("builds latest trend alert from canonical CSV", () => {
+    const alert = buildLatestTrendAlert({
+      symbol: "TEST",
+      thresholdPercent: 2,
+      csv: [
+        "date,total_return_index",
+        "2020-01-01,100",
+        "2021-01-01,110",
+        "2022-01-01,121",
+        "2023-01-01,120",
+      ].join("\n"),
+    });
+
+    expect(alert.latest.date).toBe("2023-01-01");
+    expect(alert.latestTrendIndex).toBeGreaterThan(0);
+    expect(alert.shouldAlert).toBe(true);
   });
 });
 

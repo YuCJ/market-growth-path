@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   build:
+    timeout-minutes: 5
     name: Build
     runs-on: ubuntu-latest
 
