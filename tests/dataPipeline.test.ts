@@ -1,0 +1,123 @@
+import { describe, expect, it } from "vitest";
+import { buildCanonicalSeries } from "../src/data/pipeline/buildCanonicalSeries";
+import { canonicalRowsToCsv, sourceRowsToCsv } from "../src/data/pipeline/csv";
+import { validateSourceMarketRows } from "../src/data/pipeline/validateMarketRows";
+import { parseAlphaVantageWeeklyAdjustedResponse } from "../src/data/providers/alphaVantage";
+import type { SourceMarketRow } from "../src/data/providers/types";
+
+describe("Alpha Vantage weekly adjusted parser", () => {
+  it("parses rows sorted from oldest to newest", () => {
+    const rows = parseAlphaVantageWeeklyAdjustedResponse(
+      {
+        "Weekly Adjusted Time Series": {
+          "2024-01-12": {
+            "1. open": "101.00",
+            "2. high": "103.00",
+            "3. low": "100.00",
+            "4. close": "102.00",
+            "5. adjusted close": "102.00",
+            "6. volume": "2000",
+            "7. dividend amount": "0.1000",
+          },
+          "2024-01-05": {
+            "1. open": "99.00",
+            "2. high": "101.00",
+            "3. low": "98.00",
+            "4. close": "100.00",
+            "5. adjusted close": "100.00",
+            "6. volume": "1000",
+            "7. dividend amount": "0.0000",
+          },
+        },
+      },
+      { symbol: "VT" },
+    );
+
+    expect(rows.map((row) => row.date)).toEqual(["2024-01-05", "2024-01-12"]);
+    expect(rows[0]).toMatchObject({
+      provider: "alpha-vantage",
+      symbol: "VT",
+      adjusted_close: 100,
+      dividend_amount: 0,
+    });
+  });
+
+  it("surfaces provider error payloads", () => {
+    expect(() =>
+      parseAlphaVantageWeeklyAdjustedResponse(
+        { "Error Message": "Invalid API call." },
+        { symbol: "VT" },
+      ),
+    ).toThrow("Invalid API call.");
+  });
+});
+
+describe("source market row validation", () => {
+  it("rejects duplicate dates", () => {
+    expect(() =>
+      validateSourceMarketRows([
+        makeRow({ date: "2024-01-05" }),
+        makeRow({ date: "2024-01-05" }),
+      ]),
+    ).toThrow("Duplicate date");
+  });
+
+  it("rejects non-positive adjusted close values", () => {
+    expect(() =>
+      validateSourceMarketRows([
+        makeRow({ date: "2024-01-05", adjusted_close: 0 }),
+      ]),
+    ).toThrow("Adjusted close must be greater than 0");
+  });
+});
+
+describe("canonical market series", () => {
+  it("rebases adjusted close to a total-return-like index", () => {
+    const canonical = buildCanonicalSeries([
+      makeRow({ date: "2024-01-05", adjusted_close: 50 }),
+      makeRow({ date: "2024-01-12", adjusted_close: 75 }),
+      makeRow({ date: "2024-01-19", adjusted_close: 100 }),
+    ]);
+
+    expect(canonical.map((row) => row.total_return_index)).toEqual([
+      100, 150, 200,
+    ]);
+    expect(canonical[0]).toMatchObject({
+      source_value: 50,
+      provider: "alpha-vantage",
+      symbol: "VT",
+      source_field: "adjusted_close",
+    });
+  });
+});
+
+describe("CSV serialization", () => {
+  it("writes stable source and canonical headers", () => {
+    const source = [makeRow({ date: "2024-01-05", adjusted_close: 100 })];
+    const canonical = buildCanonicalSeries(source);
+
+    expect(sourceRowsToCsv(source).split("\n")[0]).toBe(
+      "date,provider,symbol,open,high,low,close,adjusted_close,volume,dividend_amount",
+    );
+    expect(canonicalRowsToCsv(canonical).split("\n")[0]).toBe(
+      "date,total_return_index,source_value,provider,symbol,source_field",
+    );
+  });
+});
+
+function makeRow(overrides: Partial<SourceMarketRow> = {}): SourceMarketRow {
+  return {
+    date: "2024-01-05",
+    provider: "alpha-vantage",
+    symbol: "VT",
+    open: 100,
+    high: 101,
+    low: 99,
+    close: 100,
+    adjusted_close: 100,
+    volume: 1000,
+    dividend_amount: 0,
+    ...overrides,
+  };
+}
+
