@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildCanonicalSeries } from "../src/data/pipeline/buildCanonicalSeries.ts";
 import {
   canonicalRowsToCsv,
@@ -13,7 +13,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const symbol = process.env.MARKET_DATA_SYMBOL ?? "VT";
 const providerId = "alpha-vantage";
 const frequency = "weekly-adjusted";
-const acquisitionDate = new Date().toISOString().slice(0, 10);
+const snapshotKind = process.env.MARKET_DATA_SNAPSHOT_KIND ?? "manual";
+const acquisitionDate =
+  snapshotKind === "automated"
+    ? getUtcIsoWeekStartDate(new Date())
+    : new Date().toISOString().slice(0, 10);
 
 async function main(): Promise<void> {
   await loadDotEnv();
@@ -48,7 +52,7 @@ async function main(): Promise<void> {
   await mkdir(sourceDir, { recursive: true });
   await mkdir(canonicalDir, { recursive: true });
 
-  const sourcePath = resolve(sourceDir, `${acquisitionDate}.manual.csv`);
+  const sourcePath = resolve(sourceDir, `${acquisitionDate}.${snapshotKind}.csv`);
   const canonicalPath = resolve(
     canonicalDir,
     `market-total-return-${symbol.toLowerCase()}-weekly.v1.csv`,
@@ -154,8 +158,16 @@ Each canonical file must keep one symbol/provider/frequency combination and clea
   );
 }
 
-function relativeToRepo(path: string): string {
-  return path.slice(repoRoot.length + 1);
+export function getUtcIsoWeekStartDate(date: Date): string {
+  const utcMidnight = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+  );
+  const dayOfWeek = new Date(utcMidnight).getUTCDay();
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+  const monday = new Date(utcMidnight - daysSinceMonday * 24 * 60 * 60 * 1000);
+  return monday.toISOString().slice(0, 10);
 }
 
 function unquoteEnvValue(value: string): string {
@@ -168,7 +180,9 @@ function unquoteEnvValue(value: string): string {
   return value;
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

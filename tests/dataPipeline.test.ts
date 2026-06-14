@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getUtcIsoWeekStartDate } from "../scripts/fetchHistoricalData";
 import { buildCanonicalSeries } from "../src/data/pipeline/buildCanonicalSeries";
 import { canonicalRowsToCsv, sourceRowsToCsv } from "../src/data/pipeline/csv";
 import { validateSourceMarketRows } from "../src/data/pipeline/validateMarketRows";
@@ -105,6 +106,17 @@ describe("CSV serialization", () => {
   });
 });
 
+describe("dataset snapshot cadence", () => {
+  it("uses a stable UTC weekly bucket for automated snapshots", () => {
+    expect(getUtcIsoWeekStartDate(new Date("2026-06-08T00:00:00.000Z"))).toBe(
+      "2026-06-08",
+    );
+    expect(getUtcIsoWeekStartDate(new Date("2026-06-14T23:59:59.999Z"))).toBe(
+      "2026-06-08",
+    );
+  });
+});
+
 function makeRow(overrides: Partial<SourceMarketRow> = {}): SourceMarketRow {
   return {
     date: "2024-01-05",
@@ -120,4 +132,3 @@ function makeRow(overrides: Partial<SourceMarketRow> = {}): SourceMarketRow {
     ...overrides,
   };
 }
-
