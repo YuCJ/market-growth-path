@@ -8,6 +8,9 @@ describe("App", () => {
 
     expect(screen.getByText("Market Growth Path")).toBeInTheDocument();
     expect(screen.getByText("Latest index")).toBeInTheDocument();
-    expect(screen.getByText("VT weekly adjusted close proxy")).toBeInTheDocument();
+    expect(screen.getByLabelText("Dataset")).toHaveValue(
+      "market-total-return-iwda-lon-weekly-v1",
+    );
+    expect(screen.getByLabelText("Y axis")).toHaveValue("value");
   });
 });

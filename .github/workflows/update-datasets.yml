@@ -49,8 +49,8 @@ jobs:
 
       - name: Commit dataset changes
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "yucj"
+          git config user.email "nakts0123@gmail.com"
           git add data
           if git diff --cached --quiet; then
             echo "No dataset changes to commit."

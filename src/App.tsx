@@ -28,9 +28,11 @@ type Analysis = {
 
 type ChartPoint = [string, number | null];
 
+const DEFAULT_DATASET_ID = "market-total-return-iwda-lon-weekly-v1";
+
 export default function App() {
-  const [datasetId, setDatasetId] = useState(canonicalDatasets[0].id);
-  const [yScale, setYScale] = useState<"log" | "value">("log");
+  const [datasetId, setDatasetId] = useState(DEFAULT_DATASET_ID);
+  const [yScale, setYScale] = useState<"log" | "value">("value");
   const loaded = useMemo(
     () =>
       loadCanonicalDataset(
