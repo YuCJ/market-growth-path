@@ -5,6 +5,7 @@ import {
   calculateRollingReturns,
   fitDeterministicTrend,
   fitRandomWalkWithDrift,
+  estimateTrendReachDate,
   generateForecast,
   generateRandomWalkBacktest,
   generateTrendExtension,
@@ -29,6 +30,7 @@ type Analysis = {
   forecast: ReturnType<typeof generateForecast>;
   backtest: ReturnType<typeof generateRandomWalkBacktest>;
   trendExtension: ReturnType<typeof generateTrendExtension>;
+  trendReachLatestIndex: ReturnType<typeof estimateTrendReachDate>;
   rollingReturns: ReturnType<typeof calculateRollingReturns>;
 };
 
@@ -74,6 +76,11 @@ export default function App() {
         loaded.series,
         trend,
         FORECAST_YEARS,
+      ),
+      trendReachLatestIndex: estimateTrendReachDate(
+        loaded.series,
+        trend,
+        loaded.series.rows[loaded.series.rows.length - 1].total_return_index,
       ),
       rollingReturns: calculateRollingReturns(loaded.series, ROLLING_WINDOWS),
     };
@@ -179,6 +186,14 @@ export default function App() {
               )}
               height={460}
             />
+            <div className="mt-4 flex flex-col gap-1 border-t border-slate-200 pt-3 sm:flex-row sm:items-baseline sm:justify-between">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Model A reaches latest index
+              </div>
+              <div className="text-xl font-semibold text-slate-950">
+                {formatTrendReachDate(analysis.trendReachLatestIndex)}
+              </div>
+            </div>
           </Panel>
         </section>
 
@@ -645,6 +660,15 @@ function formatBacktestBand(inside80: boolean, inside95: boolean): string {
     return "Inside 95%";
   }
   return "Outside 95%";
+}
+
+function formatTrendReachDate(
+  reachDate: ReturnType<typeof estimateTrendReachDate>,
+): string {
+  if (!reachDate) {
+    return "Already reached";
+  }
+  return `${reachDate.date} (${formatNumber(reachDate.yearsFromLatest, 1)}Y)`;
 }
 
 function formatNumber(value: number, digits = 2): string {

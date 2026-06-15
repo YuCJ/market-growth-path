@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateRollingReturns,
+  estimateTrendReachDate,
   fitDeterministicTrend,
   fitRandomWalkWithDrift,
   generateForecast,
@@ -58,6 +59,36 @@ describe("market growth analytics", () => {
       12,
     );
     expect(trend.latestTrendIndex).not.toBeCloseTo(latest.total_return_index, 8);
+  });
+
+  it("estimates when Model A reaches an above-trend latest index", () => {
+    const rows = makeCompoundRows({ years: 8, annualReturn: 0.05 });
+    const unjumpedLatest = rows[rows.length - 1].total_return_index;
+    rows[rows.length - 1].total_return_index = unjumpedLatest * 1.2;
+    const series = prepareMarketSeries(rows);
+    const trend = fitDeterministicTrend(series);
+    const reachDate = estimateTrendReachDate(
+      series,
+      trend,
+      rows[rows.length - 1].total_return_index,
+    );
+
+    expect(reachDate).not.toBeNull();
+    expect(reachDate!.yearsFromLatest).toBeGreaterThan(0);
+    expect(reachDate!.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("does not estimate a future reach date when the latest index is not above Model A", () => {
+    const series = prepareMarketSeries(makeCompoundRows({ years: 8, annualReturn: 0.05 }));
+    const trend = fitDeterministicTrend(series);
+
+    expect(
+      estimateTrendReachDate(
+        series,
+        trend,
+        series.rows[series.rows.length - 1].total_return_index,
+      ),
+    ).toBeNull();
   });
 
   it("uses elapsed-time weighted drift for irregular dates", () => {

@@ -1,4 +1,11 @@
-import { addMonths, addStep, addYears, elapsedYears, toIsoDate } from "./time";
+import {
+  DAYS_PER_YEAR,
+  addMonths,
+  addStep,
+  addYears,
+  elapsedYears,
+  toIsoDate,
+} from "./time";
 import type {
   DeterministicTrendResult,
   ForecastPoint,
@@ -6,10 +13,12 @@ import type {
   RandomWalkBacktestResult,
   RandomWalkDriftResult,
   RollingReturnPoint,
+  TrendReachDateResult,
 } from "./types";
 
 const Z80 = 1.2816;
 const Z95 = 1.96;
+const MIN_FUTURE_REACH_YEARS = 1 / DAYS_PER_YEAR;
 
 export function fitDeterministicTrend(
   series: PreparedMarketSeries,
@@ -248,6 +257,33 @@ export function generateTrendExtension(
   }
 
   return points;
+}
+
+export function estimateTrendReachDate(
+  series: PreparedMarketSeries,
+  trend: DeterministicTrendResult,
+  targetIndex: number,
+): TrendReachDateResult | null {
+  if (targetIndex <= 0 || trend.slope <= 0) {
+    return null;
+  }
+
+  const latest = series.rows[series.rows.length - 1];
+  const targetYearsSinceStart = (Math.log(targetIndex) - trend.intercept) / trend.slope;
+  const yearsFromLatest = targetYearsSinceStart - latest.yearsSinceStart;
+  if (yearsFromLatest < MIN_FUTURE_REACH_YEARS) {
+    return null;
+  }
+
+  const firstDate = series.rows[0].dateObj;
+  const targetTime =
+    firstDate.getTime() + targetYearsSinceStart * DAYS_PER_YEAR * 86_400_000;
+
+  return {
+    targetIndex,
+    date: toIsoDate(new Date(targetTime)),
+    yearsFromLatest,
+  };
 }
 
 export function calculateRollingReturns(

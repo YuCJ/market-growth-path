@@ -41,6 +41,12 @@ export type DeterministicTrendResult = {
   currentDeviation: number;
 };
 
+export type TrendReachDateResult = {
+  targetIndex: number;
+  date: string;
+  yearsFromLatest: number;
+};
+
 export type RandomWalkDriftResult = {
   mu: number;
   annualizedDriftReturn: number;
