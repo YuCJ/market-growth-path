@@ -63,6 +63,21 @@ export type ForecastPoint = {
   upper95: number;
 };
 
+export type RandomWalkBacktestResult = {
+  lookbackMonths: number;
+  originDate: string;
+  latestDate: string;
+  originIndex: number;
+  actualLatest: number;
+  expectedLatest: number;
+  gap: number;
+  zScore: number | null;
+  inside80: boolean;
+  inside95: boolean;
+  annualizedDriftReturnAtOrigin: number;
+  path: ForecastPoint[];
+};
+
 export type RollingReturnPoint = {
   date: string;
   returns: Record<number, number | null>;

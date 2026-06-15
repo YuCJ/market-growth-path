@@ -1,8 +1,9 @@
-import { addStep, addYears, elapsedYears, toIsoDate } from "./time";
+import { addMonths, addStep, addYears, elapsedYears, toIsoDate } from "./time";
 import type {
   DeterministicTrendResult,
   ForecastPoint,
   PreparedMarketSeries,
+  RandomWalkBacktestResult,
   RandomWalkDriftResult,
   RollingReturnPoint,
 } from "./types";
@@ -70,7 +71,12 @@ export function fitDeterministicTrend(
 export function fitRandomWalkWithDrift(
   series: PreparedMarketSeries,
 ): RandomWalkDriftResult {
-  const rows = series.rows;
+  return fitRandomWalkRows(series.rows);
+}
+
+function fitRandomWalkRows(
+  rows: PreparedMarketSeries["rows"],
+): RandomWalkDriftResult {
   const logReturns = rows.slice(1).map((row, index) => ({
     date: row.date,
     deltaYears: elapsedYears(rows[index].dateObj, row.dateObj),
@@ -109,23 +115,117 @@ export function generateForecast(
 
   while (date <= endDate) {
     const hYears = elapsedYears(latest.dateObj, date);
-    const expectedLog = latest.logIndex + randomWalk.mu * hYears;
-    const forecastSd = randomWalk.annualizedInnovationSd *
-      Math.sqrt(hYears + hYears ** 2 / series.sampleYears);
-    const expected = Math.exp(expectedLog);
-    points.push({
-      date: toIsoDate(date),
-      hYears,
-      expected,
-      lower80: Math.exp(expectedLog - Z80 * forecastSd),
-      upper80: Math.exp(expectedLog + Z80 * forecastSd),
-      lower95: Math.exp(expectedLog - Z95 * forecastSd),
-      upper95: Math.exp(expectedLog + Z95 * forecastSd),
-    });
+    points.push(
+      forecastPoint({
+        date: toIsoDate(date),
+        hYears,
+        originLogIndex: latest.logIndex,
+        randomWalk,
+        sampleYears: series.sampleYears,
+      }),
+    );
     date = addStep(date, series.frequency);
   }
 
   return points;
+}
+
+export function generateRandomWalkBacktest(
+  series: PreparedMarketSeries,
+  lookbackMonths: number,
+): RandomWalkBacktestResult | null {
+  const rows = series.rows;
+  const latest = rows[rows.length - 1];
+  const originIndex = findBacktestOriginIndex(rows, latest, lookbackMonths);
+  if (originIndex === null || originIndex < 1) {
+    return null;
+  }
+
+  const origin = rows[originIndex];
+  const trainingRows = rows.slice(0, originIndex + 1);
+  const randomWalkAtOrigin = fitRandomWalkRows(trainingRows);
+  const sampleYearsAtOrigin = elapsedYears(trainingRows[0].dateObj, origin.dateObj);
+  const path = rows.slice(originIndex).map((row) =>
+    forecastPoint({
+      date: row.date,
+      hYears: elapsedYears(origin.dateObj, row.dateObj),
+      originLogIndex: origin.logIndex,
+      randomWalk: randomWalkAtOrigin,
+      sampleYears: sampleYearsAtOrigin,
+    }),
+  );
+  const latestPoint = path[path.length - 1];
+  const forecastSd =
+    randomWalkAtOrigin.annualizedInnovationSd *
+    Math.sqrt(
+      latestPoint.hYears + latestPoint.hYears ** 2 / sampleYearsAtOrigin,
+    );
+  const zScore =
+    forecastSd === 0
+      ? null
+      : (latest.logIndex - Math.log(latestPoint.expected)) / forecastSd;
+
+  return {
+    lookbackMonths,
+    originDate: origin.date,
+    latestDate: latest.date,
+    originIndex,
+    actualLatest: latest.total_return_index,
+    expectedLatest: latestPoint.expected,
+    gap: latest.total_return_index / latestPoint.expected - 1,
+    zScore,
+    inside80:
+      latest.total_return_index >= latestPoint.lower80 &&
+      latest.total_return_index <= latestPoint.upper80,
+    inside95:
+      latest.total_return_index >= latestPoint.lower95 &&
+      latest.total_return_index <= latestPoint.upper95,
+    annualizedDriftReturnAtOrigin: randomWalkAtOrigin.annualizedDriftReturn,
+    path,
+  };
+}
+
+function forecastPoint({
+  date,
+  hYears,
+  originLogIndex,
+  randomWalk,
+  sampleYears,
+}: {
+  date: string;
+  hYears: number;
+  originLogIndex: number;
+  randomWalk: RandomWalkDriftResult;
+  sampleYears: number;
+}): ForecastPoint {
+  const expectedLog = originLogIndex + randomWalk.mu * hYears;
+  const forecastSd =
+    randomWalk.annualizedInnovationSd *
+    Math.sqrt(hYears + hYears ** 2 / sampleYears);
+
+  return {
+    date,
+    hYears,
+    expected: Math.exp(expectedLog),
+    lower80: Math.exp(expectedLog - Z80 * forecastSd),
+    upper80: Math.exp(expectedLog + Z80 * forecastSd),
+    lower95: Math.exp(expectedLog - Z95 * forecastSd),
+    upper95: Math.exp(expectedLog + Z95 * forecastSd),
+  };
+}
+
+function findBacktestOriginIndex(
+  rows: PreparedMarketSeries["rows"],
+  latest: PreparedMarketSeries["rows"][number],
+  lookbackMonths: number,
+): number | null {
+  const targetDate = addMonths(latest.dateObj, -lookbackMonths);
+  for (let index = rows.length - 2; index >= 0; index -= 1) {
+    if (rows[index].dateObj <= targetDate) {
+      return index;
+    }
+  }
+  return null;
 }
 
 export function generateTrendExtension(

@@ -6,9 +6,11 @@ import {
   fitDeterministicTrend,
   fitRandomWalkWithDrift,
   generateForecast,
+  generateRandomWalkBacktest,
   generateTrendExtension,
 } from "./analytics/models";
-import { addYears, toIsoDate } from "./analytics/time";
+import { addYears, elapsedYears, toIsoDate } from "./analytics/time";
+import type { PreparedMarketSeries } from "./analytics/types";
 import { Chart } from "./components/Chart";
 import {
   canonicalDatasets,
@@ -16,12 +18,16 @@ import {
 } from "./data/canonicalDatasets";
 
 const FORECAST_YEARS = 30;
+const DEFAULT_BACKTEST_LOOKBACK_MONTHS = 12;
+const MIN_BACKTEST_LOOKBACK_MONTHS = 3;
+const MAX_BACKTEST_LOOKBACK_MONTHS = 120;
 const ROLLING_WINDOWS = [5, 10, 20];
 
 type Analysis = {
   trend: ReturnType<typeof fitDeterministicTrend>;
   randomWalk: ReturnType<typeof fitRandomWalkWithDrift>;
   forecast: ReturnType<typeof generateForecast>;
+  backtest: ReturnType<typeof generateRandomWalkBacktest>;
   trendExtension: ReturnType<typeof generateTrendExtension>;
   rollingReturns: ReturnType<typeof calculateRollingReturns>;
 };
@@ -33,6 +39,9 @@ const DEFAULT_DATASET_ID = "market-total-return-iwda-lon-weekly-v1";
 export default function App() {
   const [datasetId, setDatasetId] = useState(DEFAULT_DATASET_ID);
   const [yScale, setYScale] = useState<"log" | "value">("value");
+  const [backtestLookbackMonths, setBacktestLookbackMonths] = useState(
+    DEFAULT_BACKTEST_LOOKBACK_MONTHS,
+  );
   const loaded = useMemo(
     () =>
       loadCanonicalDataset(
@@ -41,6 +50,15 @@ export default function App() {
       ),
     [datasetId],
   );
+  const backtestRange = useMemo(
+    () => getBacktestLookbackRange(loaded.series),
+    [loaded],
+  );
+  const selectedBacktestLookbackMonths = clamp(
+    backtestLookbackMonths,
+    backtestRange.min,
+    backtestRange.max,
+  );
   const analysis = useMemo(() => {
     const trend = fitDeterministicTrend(loaded.series);
     const randomWalk = fitRandomWalkWithDrift(loaded.series);
@@ -48,6 +66,10 @@ export default function App() {
       trend,
       randomWalk,
       forecast: generateForecast(loaded.series, randomWalk, FORECAST_YEARS),
+      backtest: generateRandomWalkBacktest(
+        loaded.series,
+        selectedBacktestLookbackMonths,
+      ),
       trendExtension: generateTrendExtension(
         loaded.series,
         trend,
@@ -55,8 +77,14 @@ export default function App() {
       ),
       rollingReturns: calculateRollingReturns(loaded.series, ROLLING_WINDOWS),
     };
-  }, [loaded]);
+  }, [loaded, selectedBacktestLookbackMonths]);
   const latest = loaded.series.rows[loaded.series.rows.length - 1];
+  const backtest = analysis.backtest;
+  const backtestLabel = formatLookbackLabel(selectedBacktestLookbackMonths);
+  const updateBacktestLookback = (value: string) =>
+    setBacktestLookbackMonths(Number(value));
+  const rSquaredValue = formatNumber(analysis.trend.rSquared, 3);
+  const rSquaredPercent = formatPercent(analysis.trend.rSquared);
   const visibleDateRange = {
     min: toIsoDate(addYears(latest.dateObj, -5)),
     max: toIsoDate(addYears(latest.dateObj, 5)),
@@ -96,6 +124,34 @@ export default function App() {
               </select>
             </label>
 
+            <div className="min-w-64 text-sm font-medium text-slate-700">
+              <span className="mb-1 flex items-center justify-between gap-3">
+                <span>Backtest lookback</span>
+                <span className="font-semibold text-slate-950">
+                  {formatLookbackDuration(selectedBacktestLookbackMonths)}
+                </span>
+              </span>
+              <input
+                aria-label="Backtest lookback months"
+                className="h-10 w-full accent-teal-700"
+                type="range"
+                min={backtestRange.min}
+                max={backtestRange.max}
+                step={1}
+                value={selectedBacktestLookbackMonths}
+                onInput={(event) =>
+                  updateBacktestLookback(event.currentTarget.value)
+                }
+                onChange={(event) =>
+                  updateBacktestLookback(event.currentTarget.value)
+                }
+              />
+              <span className="flex justify-between text-xs text-slate-500">
+                <span>{formatLookbackDuration(backtestRange.min)}</span>
+                <span>{formatLookbackDuration(backtestRange.max)}</span>
+              </span>
+            </div>
+
             <label className="text-sm font-medium text-slate-700">
               <span className="mb-1 block">Y axis</span>
               <select
@@ -114,7 +170,13 @@ export default function App() {
         <section className="py-5">
           <Panel title="Index, trend, and forecast paths">
             <Chart
-              option={buildMainChart(loaded, analysis, yScale, visibleDateRange)}
+              option={buildMainChart(
+                loaded,
+                analysis,
+                yScale,
+                visibleDateRange,
+                backtestLabel,
+              )}
               height={460}
             />
           </Panel>
@@ -134,8 +196,8 @@ export default function App() {
           />
           <Explanation
             title="R-squared"
-            body="Shows how closely historical data follows Model A's smooth trend line. It is not a win rate, not forecast accuracy, and not evidence that the market must return to the trend."
-            translation="表示歷史資料有多貼近模型 A 的平滑趨勢線。它不是勝率、不是預測準確率，也不是市場一定會回到趨勢線的證據。"
+            body={`R-squared is ${rSquaredValue}, which means Model A's smooth trend line explains about ${rSquaredPercent} of the historical log-index variation. It is not a win rate or forecast accuracy.`}
+            translation={`現在的 R-squared 是 ${rSquaredValue}，可以粗略讀成：模型 A 的平滑趨勢線能解釋約 ${rSquaredPercent} 的歷史指數變化。數字越接近 1，代表歷史走勢越貼近這條線；但這不是勝率，也不是預測準確率。`}
           />
         </section>
 
@@ -158,6 +220,30 @@ export default function App() {
           <Metric label="Frequency" value={loaded.series.frequency} />
           <Metric label="Data points" value={formatNumber(loaded.series.rows.length, 0)} />
           <Metric label="R-squared" value={formatNumber(analysis.trend.rSquared, 3)} />
+          <Metric
+            label={`${backtestLabel} expected today`}
+            value={
+              backtest
+                ? formatNumber(backtest.expectedLatest)
+                : "n/a"
+            }
+          />
+          <Metric
+            label={`${backtestLabel} forecast gap`}
+            value={backtest ? formatPercent(backtest.gap) : "n/a"}
+          />
+          <Metric
+            label={`${backtestLabel} backtest band`}
+            value={
+              backtest
+                ? formatBacktestBand(backtest.inside80, backtest.inside95)
+                : "n/a"
+            }
+          />
+          <Metric
+            label={`${backtestLabel} origin date`}
+            value={backtest?.originDate ?? "n/a"}
+          />
         </section>
 
         {/* Selected canonical dataset metadata */}
@@ -256,6 +342,7 @@ function buildMainChart(
   analysis: Analysis,
   yScale: "log" | "value",
   visibleDateRange: VisibleDateRange,
+  backtestLabel: string,
 ): EChartsOption {
   const historical: ChartPoint[] = loaded.series.rows.map((row) => [
     row.date,
@@ -273,11 +360,18 @@ function buildMainChart(
     point.date,
     point.expected,
   ]);
+  const backtestForecast: ChartPoint[] =
+    analysis.backtest?.path.map((point) => [
+      point.date,
+      point.expected,
+    ]) ?? [];
+  const backtestPathLabel = `Model B ${backtestLabel} backtest path`;
   const visiblePrimaryLines = [
     ...filterVisibleData(historical, visibleDateRange),
     ...filterVisibleData(fitted, visibleDateRange),
     ...filterVisibleData(trendExtension, visibleDateRange),
     ...filterVisibleData(forecast, visibleDateRange),
+    ...filterVisibleData(backtestForecast, visibleDateRange),
   ];
 
   return baseChartOption({
@@ -289,6 +383,7 @@ function buildMainChart(
       "Model A fitted trend",
       "Model A extension",
       "Model B expected path",
+      backtestPathLabel,
     ],
     series: [
       line("Actual index", filterVisibleData(historical, visibleDateRange), "#0f766e", 2.4),
@@ -305,6 +400,13 @@ function buildMainChart(
         filterVisibleData(forecast, visibleDateRange),
         "#b45309",
         2.4,
+      ),
+      line(
+        backtestPathLabel,
+        filterVisibleData(backtestForecast, visibleDateRange),
+        "#e11d48",
+        2.2,
+        "dotted",
       ),
     ],
   });
@@ -494,8 +596,55 @@ function rollingColor(windowYears: number): string {
   return "#b45309";
 }
 
+function getBacktestLookbackRange(
+  series: PreparedMarketSeries,
+): { min: number; max: number } {
+  const latest = series.rows[series.rows.length - 1];
+  const earliestOrigin = series.rows[1] ?? series.rows[0];
+  const availableMonths = Math.max(
+    1,
+    Math.floor(elapsedYears(earliestOrigin.dateObj, latest.dateObj) * 12),
+  );
+  const max = Math.max(
+    1,
+    Math.min(MAX_BACKTEST_LOOKBACK_MONTHS, availableMonths),
+  );
+  const min = Math.min(MIN_BACKTEST_LOOKBACK_MONTHS, max);
+
+  return { min, max };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function formatLookbackLabel(months: number): string {
+  if (months % 12 === 0) {
+    return `${months / 12}Y`;
+  }
+  return `${months}M`;
+}
+
+function formatLookbackDuration(months: number): string {
+  if (months % 12 === 0) {
+    const years = months / 12;
+    return years === 1 ? "1 year" : `${years} years`;
+  }
+  return months === 1 ? "1 month" : `${months} months`;
+}
+
 function formatPercent(value: number): string {
   return `${formatNumber(value * 100, 2)}%`;
+}
+
+function formatBacktestBand(inside80: boolean, inside95: boolean): string {
+  if (inside80) {
+    return "Inside 80%";
+  }
+  if (inside95) {
+    return "Inside 95%";
+  }
+  return "Outside 95%";
 }
 
 function formatNumber(value: number, digits = 2): string {

@@ -95,7 +95,7 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-function addMonths(date: Date, months: number): Date {
+export function addMonths(date: Date, months: number): Date {
   const next = new Date(date.getTime());
   const originalDate = next.getUTCDate();
   next.setUTCDate(1);
