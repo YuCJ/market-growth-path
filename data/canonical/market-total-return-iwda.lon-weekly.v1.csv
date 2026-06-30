@@ -848,4 +848,6 @@ date,total_return_index,source_value,provider,symbol,source_field
 2026-05-29,557.115236,144.07,alpha-vantage,IWDA.LON,adjusted_close
 2026-06-05,550.386698,142.33,alpha-vantage,IWDA.LON,adjusted_close
 2026-06-12,550,142.23,alpha-vantage,IWDA.LON,adjusted_close
-2026-06-15,557.424594,144.15,alpha-vantage,IWDA.LON,adjusted_close
+2026-06-19,553.364269,143.1,alpha-vantage,IWDA.LON,adjusted_close
+2026-06-26,545.707657,141.12,alpha-vantage,IWDA.LON,adjusted_close
+2026-06-29,547.177108,141.5,alpha-vantage,IWDA.LON,adjusted_close
