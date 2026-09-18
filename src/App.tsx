@@ -522,6 +522,9 @@ function baseChartOption({
     color: ["#0f766e", "#2563eb", "#b45309", "#7c3aed", "#64748b"],
     tooltip: {
       trigger: "axis",
+      // Keep the tooltip inside the chart box, so hovering a point near the
+      // left or right edge does not push it off screen on narrow viewports.
+      confine: true,
       valueFormatter: (value) =>
         typeof value === "number" ? formatNumber(value, 2) : String(value),
     },
