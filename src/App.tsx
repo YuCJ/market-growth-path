@@ -218,7 +218,11 @@ export default function App() {
 
         {/* Key model and dataset metrics */}
         <section className="grid gap-3 pb-5 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric label="Latest index" value={formatNumber(latest.total_return_index)} />
+          <Metric
+            label="Latest index"
+            value={formatNumber(latest.total_return_index)}
+            note={`as of ${latest.date}`}
+          />
           <Metric
             label="Model A trend return"
             value={formatPercent(analysis.trend.annualizedTrendReturn)}
@@ -295,13 +299,22 @@ export default function App() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+}) {
   return (
     <div className="rounded border border-slate-200 bg-white px-4 py-3 shadow-sm">
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </div>
       <div className="mt-2 text-2xl font-semibold text-slate-950">{value}</div>
+      {note ? <div className="mt-1 text-xs text-slate-500">{note}</div> : null}
     </div>
   );
 }
