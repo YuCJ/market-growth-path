@@ -48,6 +48,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
+      # The free Alpha Vantage key allows one request per second, and the two
+      # fetch steps otherwise fire less than a second apart.
+      - name: Wait out the Alpha Vantage per-second limit
+        run: sleep 2
+
       - name: Fetch IWDA.LON weekly data
         run: npm run data:fetch:history
         env:

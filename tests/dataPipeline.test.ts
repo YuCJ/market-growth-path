@@ -8,7 +8,10 @@ import { getUtcIsoWeekStartDate } from "../scripts/fetchHistoricalData";
 import { buildCanonicalSeries } from "../src/data/pipeline/buildCanonicalSeries";
 import { canonicalRowsToCsv, sourceRowsToCsv } from "../src/data/pipeline/csv";
 import { validateSourceMarketRows } from "../src/data/pipeline/validateMarketRows";
-import { parseAlphaVantageWeeklyAdjustedResponse } from "../src/data/providers/alphaVantage";
+import {
+  isAlphaVantageBurstLimitMessage,
+  parseAlphaVantageWeeklyAdjustedResponse,
+} from "../src/data/providers/alphaVantage";
 import type { SourceMarketRow } from "../src/data/providers/types";
 
 describe("Alpha Vantage weekly adjusted parser", () => {
@@ -169,3 +172,21 @@ function makeRow(overrides: Partial<SourceMarketRow> = {}): SourceMarketRow {
     ...overrides,
   };
 }
+
+describe("isAlphaVantageBurstLimitMessage", () => {
+  it("treats the per-second throttle notice as retryable", () => {
+    expect(
+      isAlphaVantageBurstLimitMessage(
+        "Thank you for using Alpha Vantage! Please consider spreading out your free API requests more sparingly (1 request per second). You may subscribe to any of the premium plans at https://www.alphavantage.co/premium/ to lift the free key rate limit (25 requests per day), raise the per-second burst limit, and instantly unlock all premium endpoints",
+      ),
+    ).toBe(true);
+  });
+
+  it("treats the daily quota notice as not retryable", () => {
+    expect(
+      isAlphaVantageBurstLimitMessage(
+        "We have detected your API key as ABC and our standard API rate limit is 25 requests per day.",
+      ),
+    ).toBe(false);
+  });
+});
