@@ -947,4 +947,6 @@ date,total_return_index,source_value,provider,symbol,source_field
 2026-08-14,489.565984,162.25,alpha-vantage,VT,adjusted_close
 2026-08-21,485.100297,160.77,alpha-vantage,VT,adjusted_close
 2026-08-28,485.824462,161.01,alpha-vantage,VT,adjusted_close
-2026-08-31,484.436479,160.55,alpha-vantage,VT,adjusted_close
+2026-09-04,487.996959,161.73,alpha-vantage,VT,adjusted_close
+2026-09-11,482.595892,159.94,alpha-vantage,VT,adjusted_close
+2026-09-17,480.423395,159.22,alpha-vantage,VT,adjusted_close
