@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import App from "../src/App";
+import App, { placeTooltip } from "../src/App";
 
 describe("App", () => {
   it("renders the dashboard shell", () => {
@@ -29,5 +29,29 @@ describe("App", () => {
     expect(slider).toHaveValue("18");
     expect(screen.getAllByText("18M forecast gap").length).toBeGreaterThan(0);
     expect(screen.getAllByText("18M origin date").length).toBeGreaterThan(0);
+  });
+});
+
+describe("placeTooltip", () => {
+  const size = {
+    contentSize: [120, 60] as [number, number],
+    viewSize: [400, 200] as [number, number],
+  };
+  const place = (x: number, y: number) =>
+    placeTooltip([x, y], null, null, null, size);
+
+  it("puts the tooltip to the right of the cursor when it fits", () => {
+    expect(place(100, 100)).toEqual([116, 70]);
+  });
+
+  it("flips to the left of the cursor near the right edge", () => {
+    expect(place(380, 100)).toEqual([244, 70]);
+  });
+
+  it("never places the tooltip outside the chart", () => {
+    const [x, y] = place(5, 5);
+
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(y).toBeGreaterThanOrEqual(0);
   });
 });

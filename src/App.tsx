@@ -522,9 +522,7 @@ function baseChartOption({
     color: ["#0f766e", "#2563eb", "#b45309", "#7c3aed", "#64748b"],
     tooltip: {
       trigger: "axis",
-      // Keep the tooltip inside the chart box, so hovering a point near the
-      // left or right edge does not push it off screen on narrow viewports.
-      confine: true,
+      position: placeTooltip,
       valueFormatter: (value) =>
         typeof value === "number" ? formatNumber(value, 2) : String(value),
     },
@@ -556,6 +554,39 @@ function baseChartOption({
     },
     series,
   };
+}
+
+const TOOLTIP_CURSOR_GAP = 16;
+
+/**
+ * Put the tooltip beside the cursor, flipping to the other side when it would
+ * run past the chart edge. ECharts does not clamp the position on its own, and
+ * its `confine` option only pushes the box back inside, which then covers the
+ * point being read.
+ */
+export function placeTooltip(
+  point: [number, number],
+  _params: unknown,
+  _el: unknown,
+  _rect: unknown,
+  size: { contentSize: [number, number]; viewSize: [number, number] },
+): [number, number] {
+  const [cursorX, cursorY] = point;
+  const [boxWidth, boxHeight] = size.contentSize;
+  const [viewWidth, viewHeight] = size.viewSize;
+
+  const fitsOnRight = cursorX + TOOLTIP_CURSOR_GAP + boxWidth <= viewWidth;
+  const x = fitsOnRight
+    ? cursorX + TOOLTIP_CURSOR_GAP
+    : cursorX - TOOLTIP_CURSOR_GAP - boxWidth;
+  const y = cursorY - boxHeight / 2;
+
+  // A tooltip taller or wider than the chart has no fitting position, so keep
+  // its top-left corner in view rather than letting the upper bound go negative.
+  return [
+    clamp(x, 0, Math.max(0, viewWidth - boxWidth)),
+    clamp(y, 0, Math.max(0, viewHeight - boxHeight)),
+  ];
 }
 
 type VisibleDateRange = {
