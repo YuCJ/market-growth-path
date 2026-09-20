@@ -861,4 +861,4 @@ date,provider,symbol,open,high,low,close,adjusted_close,volume,dividend_amount
 2026-08-28,alpha-vantage,IWDA.LON,147.31,148.99,146.95,148.77,148.77,1090223,0
 2026-09-04,alpha-vantage,IWDA.LON,147.56,148.9078,145.7,148.09,148.09,1693014,0
 2026-09-11,alpha-vantage,IWDA.LON,148.19,148.32,145.45,146.96,146.96,1879299,0
-2026-09-17,alpha-vantage,IWDA.LON,145.71,146.66,144.81,146.22,146.22,1182238,0
+2026-09-18,alpha-vantage,IWDA.LON,145.71,146.69,144.81,145.69,145.69,1874781,0
