@@ -22,13 +22,22 @@ describe("App", () => {
     expect(slider).toHaveAttribute("min", "3");
     expect(slider).toHaveAttribute("max", "120");
     expect(slider).toHaveAttribute("step", "1");
-    expect(screen.getAllByText("1Y forecast gap").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Now vs Model B from 1Y ago").length,
+    ).toBeGreaterThan(0);
 
     fireEvent.input(slider!, { target: { value: "18" } });
 
     expect(slider).toHaveValue("18");
-    expect(screen.getAllByText("18M forecast gap").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Now vs Model B from 18M ago").length,
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText("18M origin date").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Now vs Model A").length).toBeGreaterThan(0);
+    // The slider header names the start date it selects, e.g. "(2025-05-16)".
+    expect(
+      screen.getAllByText(/18 months ago \(\d{4}-\d{2}-\d{2}\)/).length,
+    ).toBeGreaterThan(0);
   });
 });
 

@@ -23,6 +23,9 @@ const DEFAULT_BACKTEST_LOOKBACK_MONTHS = 12;
 const MIN_BACKTEST_LOOKBACK_MONTHS = 3;
 const MAX_BACKTEST_LOOKBACK_MONTHS = 120;
 const ROLLING_WINDOWS = [5, 10, 20];
+const ACTUAL_COLOR = "#0f766e";
+const MODEL_A_COLOR = "#2563eb";
+const MODEL_B_START_COLOR = "#e11d48";
 
 type Analysis = {
   trend: ReturnType<typeof fitDeterministicTrend>;
@@ -87,13 +90,22 @@ export default function App() {
   }, [loaded, selectedBacktestLookbackMonths]);
   const latest = loaded.series.rows[loaded.series.rows.length - 1];
   const backtest = analysis.backtest;
+  const backtestStartIndex = backtest
+    ? loaded.series.rows[backtest.originIndex].total_return_index
+    : null;
   const backtestLabel = formatLookbackLabel(selectedBacktestLookbackMonths);
   const updateBacktestLookback = (value: string) =>
     setBacktestLookbackMonths(Number(value));
   const rSquaredValue = formatNumber(analysis.trend.rSquared, 3);
   const rSquaredPercent = formatPercent(analysis.trend.rSquared);
+  const defaultVisibleStart = toIsoDate(addYears(latest.dateObj, -5));
   const visibleDateRange = {
-    min: toIsoDate(addYears(latest.dateObj, -5)),
+    // A Model B start date more than five years back would otherwise sit
+    // outside the chart, leaving a dotted line with no visible beginning.
+    min:
+      backtest && backtest.originDate < defaultVisibleStart
+        ? backtest.originDate
+        : defaultVisibleStart,
     max: toIsoDate(addYears(latest.dateObj, 5)),
   };
 
@@ -132,14 +144,15 @@ export default function App() {
             </label>
 
             <div className="min-w-64 text-sm font-medium text-slate-700">
-              <span className="mb-1 flex items-center justify-between gap-3">
-                <span>Backtest lookback</span>
+              <span className="mb-1 flex flex-col">
+                <span>Compare with average growth since</span>
                 <span className="font-semibold text-slate-950">
-                  {formatLookbackDuration(selectedBacktestLookbackMonths)}
+                  {formatLookbackDuration(selectedBacktestLookbackMonths)} ago
+                  {backtest ? ` (${backtest.originDate})` : ""}
                 </span>
               </span>
               <input
-                aria-label="Backtest lookback months"
+                aria-label="Comparison start date, months before the latest date"
                 className="h-10 w-full accent-teal-700"
                 type="range"
                 min={backtestRange.min}
@@ -154,8 +167,8 @@ export default function App() {
                 }
               />
               <span className="flex justify-between text-xs text-slate-500">
-                <span>{formatLookbackDuration(backtestRange.min)}</span>
-                <span>{formatLookbackDuration(backtestRange.max)}</span>
+                <span>{formatLookbackDuration(backtestRange.min)} ago</span>
+                <span>{formatLookbackDuration(backtestRange.max)} ago</span>
               </span>
             </div>
 
@@ -186,13 +199,28 @@ export default function App() {
               )}
               height={460}
             />
-            <div className="mt-4 flex flex-col gap-1 border-t border-slate-200 pt-3 sm:flex-row sm:items-baseline sm:justify-between">
-              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                Model A reaches latest index
-              </div>
-              <div className="text-xl font-semibold text-slate-950">
-                {formatTrendReachDate(analysis.trendReachLatestIndex)}
-              </div>
+            <div className="mt-4 grid gap-4 border-t border-slate-200 pt-3 md:grid-cols-3">
+              <GapReadout
+                color={MODEL_A_COLOR}
+                label="Now vs Model A"
+                value={formatSignedPercent(analysis.trend.currentDeviation)}
+                note="最新指數比長期趨勢線（藍點）高或低多少。"
+              />
+              <GapReadout
+                color={MODEL_B_START_COLOR}
+                label={`Now vs Model B from ${backtestLabel} ago`}
+                value={backtest ? formatSignedPercent(backtest.gap) : "n/a"}
+                note={
+                  backtest && backtestStartIndex !== null
+                    ? `從 ${backtest.originDate} 到現在，指數實際變動 ${formatSignedPercent(backtest.actualLatest / backtestStartIndex - 1)}；照當時為止的長期平均成長率應該是 ${formatSignedPercent(backtest.expectedLatest / backtestStartIndex - 1)}（紅點）。差距就是這段期間多漲或少漲的部分。`
+                    : "資料不足，無法比較。"
+                }
+              />
+              <GapReadout
+                label="Model A reaches latest index"
+                value={formatTrendReachDate(analysis.trendReachLatestIndex)}
+                note="趨勢線自己長到現在這個水準的日期。"
+              />
             </div>
           </Panel>
         </section>
@@ -201,13 +229,13 @@ export default function App() {
         <section className="grid gap-4 pb-5 text-sm leading-6 text-slate-700 lg:grid-cols-3">
           <Explanation
             title="Model A"
-            body="Assumes the historical log index moves around one smooth long-term time trend. The line is fitted with the full history, so it does not need to pass through today's index."
-            translation="假設歷史指數的對數水準，圍繞一條平滑的長期時間趨勢。這條線用整段歷史資料估計，所以不一定會通過今天的指數。"
+            body="Guess: the index keeps returning to one smooth long-term trend line. The line is fitted to the whole history, so it does not pass through the latest index. The gap between the two answers: if the trend line is the normal level, how far above or below it are we now?"
+            translation="猜測：指數長期會回到一條平滑的趨勢線附近。這條線用整段歷史估計，所以不會通過最新指數。兩者的差距回答的是：如果趨勢線才是正常水準，現在高了或低了多少？"
           />
           <Explanation
             title="Model B"
-            body="Assumes log returns have a long-run average drift, while market shocks permanently change the index level. The expected future path starts from the latest actual index."
-            translation="假設報酬有一個長期平均成長率，而市場衝擊會永久改變指數水準。未來期望路徑會從最新實際指數開始。"
+            body="Guess: past rises and falls are never taken back; the index simply continues from wherever it is at its long-run average growth rate. So this model has no fixed line to compare against. You pick a start date with the slider, and the dotted line shows where average growth alone would have taken the index from that date. The gap to the latest index is how much more or less the index moved than an average stretch of the same length. The start date is not the date of a shock; it is only where the counting begins. Set it just before an event to see how much of that event is still in the index. The solid orange line is the same average growth continued from the latest index into the future."
+            translation="猜測：過去的漲跌不會被收回，指數只是從當下的水準照長期平均成長率繼續走。所以這個模型沒有一條固定的線可以比。你用滑桿選一個起算日，虛線是「從那天起只照平均成長率走」會到的位置；它和最新指數的差距，就是這段期間比平均多漲或少漲了多少。起算日不是衝擊發生的日子，只是開始計算的地方；想知道某次事件還留下多少影響，就把起算日設在事件之前。橘色實線則是從最新指數出發，照同樣的平均成長率往未來延伸。"
           />
           <Explanation
             title="R-squared"
@@ -231,10 +259,6 @@ export default function App() {
             label="Model B drift return"
             value={formatPercent(analysis.randomWalk.annualizedDriftReturn)}
           />
-          <Metric
-            label="Current trend deviation"
-            value={formatPercent(analysis.trend.currentDeviation)}
-          />
           <Metric label="Sample years" value={formatNumber(loaded.series.sampleYears, 1)} />
           <Metric label="Frequency" value={loaded.series.frequency} />
           <Metric label="Data points" value={formatNumber(loaded.series.rows.length, 0)} />
@@ -246,10 +270,6 @@ export default function App() {
                 ? formatNumber(backtest.expectedLatest)
                 : "n/a"
             }
-          />
-          <Metric
-            label={`${backtestLabel} forecast gap`}
-            value={backtest ? formatPercent(backtest.gap) : "n/a"}
           />
           <Metric
             label={`${backtestLabel} backtest band`}
@@ -315,6 +335,36 @@ function Metric({
       </div>
       <div className="mt-2 text-2xl font-semibold text-slate-950">{value}</div>
       {note ? <div className="mt-1 text-xs text-slate-500">{note}</div> : null}
+    </div>
+  );
+}
+
+function GapReadout({
+  color,
+  label,
+  value,
+  note,
+}: {
+  /** Colour of the chart dot this number refers to; omit when there is none. */
+  color?: string;
+  label: string;
+  value: string;
+  note: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+        {color ? (
+          <span
+            aria-hidden="true"
+            className="inline-block h-2.5 w-2.5 rounded-full"
+            style={{ backgroundColor: color }}
+          />
+        ) : null}
+        {label}
+      </div>
+      <div className="mt-1 text-2xl font-semibold text-slate-950">{value}</div>
+      <div className="mt-1 text-xs leading-5 text-slate-600">{note}</div>
     </div>
   );
 }
@@ -393,7 +443,10 @@ function buildMainChart(
       point.date,
       point.expected,
     ]) ?? [];
-  const backtestPathLabel = `Model B ${backtestLabel} backtest path`;
+  const backtestPathLabel = `Model B: average growth from ${backtestLabel} ago`;
+  const latestRow = loaded.series.rows[loaded.series.rows.length - 1];
+  const backtestStart = analysis.backtest?.path[0];
+  const backtestEnd = analysis.backtest?.path[analysis.backtest.path.length - 1];
   const visiblePrimaryLines = [
     ...filterVisibleData(historical, visibleDateRange),
     ...filterVisibleData(fitted, visibleDateRange),
@@ -414,8 +467,36 @@ function buildMainChart(
       backtestPathLabel,
     ],
     series: [
-      line("Actual index", filterVisibleData(historical, visibleDateRange), "#0f766e", 2.4),
-      line("Model A fitted trend", filterVisibleData(fitted, visibleDateRange), "#2563eb", 2),
+      {
+        ...line(
+          "Actual index",
+          filterVisibleData(historical, visibleDateRange),
+          ACTUAL_COLOR,
+          2.4,
+        ),
+        markPoint: dots(ACTUAL_COLOR, [
+          [latestRow.date, latestRow.total_return_index],
+        ]),
+        // Marks where history ends, so the three dots on it read as "now".
+        markLine: {
+          silent: true,
+          symbol: "none",
+          lineStyle: { color: "#94a3b8", type: "dashed", width: 1 },
+          label: { formatter: `Latest ${latestRow.date}`, color: "#475569" },
+          data: [{ xAxis: latestRow.date }],
+        },
+      },
+      {
+        ...line(
+          "Model A fitted trend",
+          filterVisibleData(fitted, visibleDateRange),
+          MODEL_A_COLOR,
+          2,
+        ),
+        markPoint: dots(MODEL_A_COLOR, [
+          [latestRow.date, analysis.trend.latestTrendIndex],
+        ]),
+      },
       line(
         "Model A extension",
         filterVisibleData(trendExtension, visibleDateRange),
@@ -429,13 +510,24 @@ function buildMainChart(
         "#b45309",
         2.4,
       ),
-      line(
-        backtestPathLabel,
-        filterVisibleData(backtestForecast, visibleDateRange),
-        "#e11d48",
-        2.2,
-        "dotted",
-      ),
+      {
+        ...line(
+          backtestPathLabel,
+          filterVisibleData(backtestForecast, visibleDateRange),
+          MODEL_B_START_COLOR,
+          2.2,
+          "dotted",
+        ),
+        markPoint: dots(
+          MODEL_B_START_COLOR,
+          backtestStart && backtestEnd
+            ? [
+                [backtestStart.date, backtestStart.expected],
+                [backtestEnd.date, backtestEnd.expected],
+              ]
+            : [],
+        ),
+      },
     ],
   });
 }
@@ -612,6 +704,17 @@ function line(
   };
 }
 
+function dots(color: string, points: [string, number][]) {
+  return {
+    silent: true,
+    symbol: "circle",
+    symbolSize: 10,
+    label: { show: false },
+    itemStyle: { color, borderColor: "#ffffff", borderWidth: 2 },
+    data: points.map((coord) => ({ name: coord[0], coord })),
+  };
+}
+
 function filterVisibleData<T extends ChartPoint>(
   data: T[],
   visibleDateRange: VisibleDateRange,
@@ -697,6 +800,16 @@ function formatLookbackDuration(months: number): string {
 
 function formatPercent(value: number): string {
   return `${formatNumber(value * 100, 2)}%`;
+}
+
+function formatSignedPercent(value: number): string {
+  const text = formatPercent(value);
+  // Decide the sign from what is displayed, so a gap that rounds to zero is
+  // shown as plain "0.00%" instead of "+0.00%" or "-0.00%".
+  if (Number(text.replace(/[%,]/g, "")) === 0) {
+    return formatPercent(0);
+  }
+  return value > 0 ? `+${text}` : text;
 }
 
 function formatBacktestBand(inside80: boolean, inside95: boolean): string {
