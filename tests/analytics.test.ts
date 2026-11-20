@@ -3,9 +3,9 @@ import {
   calculateRollingReturns,
   estimateTrendReachDate,
   fitDeterministicTrend,
-  fitRandomWalkWithDrift,
-  generateForecast,
-  generateRandomWalkBacktest,
+  findLastRowIndexOnOrBefore,
+  fitBrokenTrend,
+  generateBrokenTrendExtension,
 } from "../src/analytics/models";
 import type { CanonicalMarketRow } from "../src/analytics/types";
 import { parseCanonicalCsv, prepareMarketSeries } from "../src/data/canonicalCsv";
@@ -18,10 +18,8 @@ describe("market growth analytics", () => {
   it("estimates 5% annual growth for a deterministic 5% compound series", () => {
     const series = prepareMarketSeries(makeCompoundRows({ years: 12, annualReturn: 0.05 }));
     const trend = fitDeterministicTrend(series);
-    const randomWalk = fitRandomWalkWithDrift(series);
 
     expect(trend.annualizedTrendReturn).toBeCloseTo(0.05, 8);
-    expect(randomWalk.annualizedDriftReturn).toBeCloseTo(0.05, 8);
   });
 
   it("keeps annualized growth unchanged when the whole series is scaled", () => {
@@ -38,27 +36,88 @@ describe("market growth analytics", () => {
       fitDeterministicTrend(base).annualizedTrendReturn,
       12,
     );
-    expect(fitRandomWalkWithDrift(scaled).annualizedDriftReturn).toBeCloseTo(
-      fitRandomWalkWithDrift(base).annualizedDriftReturn,
-      12,
+    const scaledBroken = fitBrokenTrend(scaled, "2024-01-01")!;
+    const baseBroken = fitBrokenTrend(base, "2024-01-01")!;
+    expect(scaledBroken.annualizedReturnAfter).toBeCloseTo(
+      baseBroken.annualizedReturnAfter,
+      10,
+    );
+    expect(scaledBroken.currentDeviation).toBeCloseTo(
+      baseBroken.currentDeviation,
+      10,
     );
   });
 
-  it("anchors the random walk forecast at the latest actual value after a jump", () => {
+  it("does not force Model A through the latest value after a jump", () => {
     const jumpedRows = makeCompoundRows({ years: 8, annualReturn: 0.05 });
     const latest = jumpedRows[jumpedRows.length - 1];
     latest.total_return_index *= 1.2;
-    const series = prepareMarketSeries(jumpedRows);
-    const trend = fitDeterministicTrend(series);
-    const randomWalk = fitRandomWalkWithDrift(series);
-    const forecast = generateForecast(series, randomWalk, 1);
+    const trend = fitDeterministicTrend(prepareMarketSeries(jumpedRows));
 
-    expect(forecast[0].expected).toBeCloseTo(latest.total_return_index, 12);
-    expect(forecast[1].expected).toBeCloseTo(
-      latest.total_return_index * Math.exp(randomWalk.mu * forecast[1].hYears),
-      12,
-    );
     expect(trend.latestTrendIndex).not.toBeCloseTo(latest.total_return_index, 8);
+  });
+
+  it("recovers both growth rates when growth changes on the break date", () => {
+    const series = prepareMarketSeries(
+      makeTwoRateRows({ years: 12, changeYear: 2028, before: 0.05, after: 0.12 }),
+    );
+    const broken = fitBrokenTrend(series, "2028-01-01")!;
+
+    expect(broken.breakDate).toBe("2028-01-01");
+    expect(broken.annualizedReturnBefore).toBeCloseTo(0.05, 8);
+    expect(broken.annualizedReturnAfter).toBeCloseTo(0.12, 8);
+    expect(broken.yearsAfterBreak).toBeCloseTo(4, 2);
+    expect(broken.currentDeviation).toBeCloseTo(0, 8);
+    // The line bends on the break date without jumping.
+    expect(broken.fitted[broken.breakIndex].deviation).toBeCloseTo(0, 8);
+  });
+
+  it("gives the same rate on both sides when growth never changed", () => {
+    const series = prepareMarketSeries(makeCompoundRows({ years: 12, annualReturn: 0.05 }));
+    const broken = fitBrokenTrend(series, "2026-01-01")!;
+
+    expect(broken.annualizedReturnBefore).toBeCloseTo(0.05, 8);
+    expect(broken.annualizedReturnAfter).toBeCloseTo(0.05, 8);
+  });
+
+  it("extends the broken trend at the growth rate after the break", () => {
+    const series = prepareMarketSeries(
+      makeTwoRateRows({ years: 12, changeYear: 2028, before: 0.05, after: 0.12 }),
+    );
+    const broken = fitBrokenTrend(series, "2028-01-01")!;
+    const extension = generateBrokenTrendExtension(series, broken, 2);
+    const last = extension[extension.length - 1];
+
+    expect(extension[0].trendIndex).toBeCloseTo(broken.latestTrendIndex, 8);
+    expect(last.date).toBe("2034-01-01");
+    expect(last.trendIndex / extension[0].trendIndex).toBeCloseTo(1.12 ** 2, 3);
+  });
+
+  it("has no broken trend when either side of the break has under three rows", () => {
+    const series = prepareMarketSeries(makeCompoundRows({ years: 8, annualReturn: 0.05 }));
+
+    expect(fitBrokenTrend(series, "2021-06-01")).toBeNull();
+    expect(fitBrokenTrend(series, "2019-01-01")).toBeNull();
+    expect(fitBrokenTrend(series, "2026-06-01")).toBeNull();
+    expect(fitBrokenTrend(series, "2025-06-01")).not.toBeNull();
+  });
+
+  it("reports a wider growth-rate error when fewer years follow the break", () => {
+    const series = loadCanonicalDataset(canonicalDatasets[0]).series;
+    const early = fitBrokenTrend(series, "2018-01-01")!;
+    const late = fitBrokenTrend(series, "2022-11-30")!;
+
+    expect(late.annualizedReturnAfterUncertainty).toBeGreaterThan(early.annualizedReturnAfterUncertainty);
+    expect(late.annualizedReturnAfterUncertainty).toBeGreaterThan(0.05);
+    expect(late.annualizedReturnAfterUncertainty).toBeLessThan(0.15);
+  });
+
+  it("finds the latest row on or before a date", () => {
+    const series = prepareMarketSeries(makeCompoundRows({ years: 3, annualReturn: 0.05 }));
+
+    expect(findLastRowIndexOnOrBefore(series.rows, "2021-06-01")).toBe(1);
+    expect(findLastRowIndexOnOrBefore(series.rows, "2021-01-01")).toBe(1);
+    expect(findLastRowIndexOnOrBefore(series.rows, "2019-12-31")).toBe(-1);
   });
 
   it("estimates when Model A reaches an above-trend latest index", () => {
@@ -91,23 +150,6 @@ describe("market growth analytics", () => {
     ).toBeNull();
   });
 
-  it("uses elapsed-time weighted drift for irregular dates", () => {
-    const series = prepareMarketSeries([
-      { date: "2020-01-01", total_return_index: 100 },
-      { date: "2020-01-08", total_return_index: 110 },
-      { date: "2021-01-01", total_return_index: 130 },
-    ]);
-    const randomWalk = fitRandomWalkWithDrift(series);
-    const expected =
-      Math.log(130 / 100) /
-      ((new Date("2021-01-01T00:00:00.000Z").getTime() -
-        new Date("2020-01-01T00:00:00.000Z").getTime()) /
-        86_400_000 /
-        365.2425);
-
-    expect(randomWalk.mu).toBeCloseTo(expected, 12);
-  });
-
   it("calculates rolling annualized returns with date windows", () => {
     const series = prepareMarketSeries(makeCompoundRows({ years: 7, annualReturn: 0.05 }));
     const rolling = calculateRollingReturns(series, [5]);
@@ -130,65 +172,6 @@ describe("market growth analytics", () => {
     expect(frequencies).toEqual(["weekly", "weekly"]);
   });
 
-  it("widens forecast intervals with horizon and keeps 95% wider than 80%", () => {
-    const series = prepareMarketSeries([
-      { date: "2020-01-03", total_return_index: 100 },
-      { date: "2021-01-03", total_return_index: 130 },
-      { date: "2022-01-03", total_return_index: 105 },
-      { date: "2023-01-03", total_return_index: 150 },
-    ]);
-    const forecast = generateForecast(series, fitRandomWalkWithDrift(series), 3);
-    const early = forecast.find((point) => point.hYears > 0)!;
-    const late = forecast[forecast.length - 1];
-
-    expect(early.upper95 - early.lower95).toBeGreaterThan(
-      early.upper80 - early.lower80,
-    );
-    expect(late.upper95 - late.lower95).toBeGreaterThan(
-      early.upper95 - early.lower95,
-    );
-  });
-
-  it("calculates a random walk backtest from information at the origin", () => {
-    const rows = makeCompoundRows({ years: 4, annualReturn: 0.05 });
-    const unjumpedLatest = rows[rows.length - 1].total_return_index;
-    rows[rows.length - 1].total_return_index *= 1.2;
-    const series = prepareMarketSeries(rows);
-    const backtest = generateRandomWalkBacktest(series, "2023-01-01");
-
-    expect(backtest).not.toBeNull();
-    expect(backtest!.originDate).toBe("2023-01-01");
-    expect(backtest!.expectedLatest).toBeCloseTo(unjumpedLatest, 8);
-    expect(backtest!.actualLatest).toBeCloseTo(unjumpedLatest * 1.2, 8);
-    expect(backtest!.gap).toBeCloseTo(0.2, 8);
-    expect(backtest!.annualizedDriftReturnAtOrigin).toBeCloseTo(0.05, 8);
-    expect(backtest!.inside80).toBe(false);
-    expect(backtest!.inside95).toBe(false);
-  });
-
-  it("starts the backtest at the latest row on or before the requested date", () => {
-    const series = prepareMarketSeries([
-      { date: "2020-01-01", total_return_index: 100 },
-      { date: "2021-01-01", total_return_index: 110 },
-      { date: "2021-07-01", total_return_index: 115 },
-      { date: "2022-01-01", total_return_index: 120 },
-    ]);
-    const backtest = generateRandomWalkBacktest(series, "2021-09-15");
-
-    expect(backtest).not.toBeNull();
-    expect(backtest!.originDate).toBe("2021-07-01");
-  });
-
-  it("has no backtest when the requested date is before the second row", () => {
-    const series = prepareMarketSeries([
-      { date: "2020-01-01", total_return_index: 100 },
-      { date: "2021-01-01", total_return_index: 110 },
-      { date: "2022-01-01", total_return_index: 120 },
-    ]);
-
-    expect(generateRandomWalkBacktest(series, "2020-06-01")).toBeNull();
-    expect(generateRandomWalkBacktest(series, "2019-01-01")).toBeNull();
-  });
 });
 
 function makeCompoundRows({
@@ -212,4 +195,34 @@ function makeCompoundRows({
             365.2425),
       ),
   }));
+}
+
+function makeTwoRateRows({
+  years,
+  changeYear,
+  before,
+  after,
+}: {
+  years: number;
+  changeYear: number;
+  before: number;
+  after: number;
+}): CanonicalMarketRow[] {
+  const yearsBetween = (from: string, to: string) =>
+    (new Date(`${to}T00:00:00.000Z`).getTime() -
+      new Date(`${from}T00:00:00.000Z`).getTime()) /
+    86_400_000 /
+    365.2425;
+  const changeDate = `${changeYear}-01-01`;
+  return Array.from({ length: years + 1 }, (_, index) => {
+    const date = `${2020 + index}-01-01`;
+    const beforeYears = yearsBetween("2020-01-01", date < changeDate ? date : changeDate);
+    const afterYears = date > changeDate ? yearsBetween(changeDate, date) : 0;
+    return {
+      date,
+      total_return_index:
+        100 *
+        Math.exp(Math.log(1 + before) * beforeYears + Math.log(1 + after) * afterYears),
+    };
+  });
 }

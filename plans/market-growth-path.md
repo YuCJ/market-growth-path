@@ -344,3 +344,18 @@ Forecast interval：
 - 測試
 - 範例資料
 - Dashboard 截圖或示範頁
+
+## 修訂（2026-11）：模型 B 改為「成長率可改變一次的趨勢」
+
+以上規格把模型 B 定義為帶漂移的隨機漫步。實作後發現它回答不了 dashboard 要回答的問題：隨機漫步的預測線從最新指數出發，和最新指數的差距永遠是零；改從過去某一天出發時，差距主要反映那一天指數的高低，而不是成長率有沒有改變。
+
+現行的模型 B 是 Perron (1989) 的 changing growth 趨勢：
+
+ln(V_t) = a + b * years_since_start + d * max(0, years_since_start - break_years) + epsilon_t
+
+- break 日期由使用者用滑桿選擇，預設為 ChatGPT 公開（2022-11-30）當天或之前最近的一筆資料。
+- a、b、d 用整段歷史以 OLS 一起估計；兩段直線在 break 日期相接，線只轉彎、不跳動。
+- break 之前的年化成長率為 exp(b) - 1，之後為 exp(b + d) - 1；未來延伸線沿用之後的成長率。
+- break 之後成長率的誤差以 exp(b + d) * sigma / sqrt(break 之後的年數) 粗估，sigma 是對數報酬的年化標準差（Merton 1980：平均成長率的精確度只取決於資料涵蓋的年數）。
+
+模型 A 與模型 B 的差別只剩一個猜測：成長率從頭到尾不變，或在 break 日期改變過一次。上文關於隨機漫步、forecast interval 與其測試的段落不再對應現行程式。

@@ -18,16 +18,18 @@ describe("App", () => {
     expect(screen.getByLabelText("Y axis")).toHaveValue("value");
   });
 
-  it("starts the Model B comparison just before ChatGPT became public by default", () => {
+  it("lets Model B change growth rate just before ChatGPT became public by default", () => {
     // Earlier renders stay in the document in this suite, so look only inside
     // this render's container.
     const view = within(render(<App />).container);
 
     // IWDA.LON has weekly rows on 2022-11-25 and 2022-12-02.
-    expect(view.getByText("Now vs Model B since 2022-11-25")).toBeInTheDocument();
+    expect(view.getByText(/^2022-11-25 \(/)).toBeInTheDocument();
+    expect(view.getByText("Now vs Model A")).toBeInTheDocument();
+    expect(view.getByText("Now vs Model B")).toBeInTheDocument();
   });
 
-  it("moves the Model B comparison start date with the slider", () => {
+  it("moves the Model B growth change date with the slider", () => {
     const { container } = render(<App />);
     const view = within(container);
     const dataset = loadCanonicalDataset(
@@ -42,16 +44,15 @@ describe("App", () => {
     expect(slider).toHaveAttribute("step", "1");
     const minIndex = Number(slider!.getAttribute("min"));
     const maxIndex = Number(slider!.getAttribute("max"));
-    expect(minIndex).toBeGreaterThanOrEqual(1);
-    expect(maxIndex).toBeLessThan(rows.length - 1);
+    expect(minIndex).toBeGreaterThanOrEqual(2);
+    expect(maxIndex).toBeLessThan(rows.length - 3);
 
     fireEvent.input(slider!, { target: { value: String(minIndex + 10) } });
 
     expect(slider).toHaveValue(String(minIndex + 10));
     expect(
-      view.getByText(`Now vs Model B since ${rows[minIndex + 10].date}`),
+      view.getByText(new RegExp(`^${rows[minIndex + 10].date} \\(`)),
     ).toBeInTheDocument();
-    expect(view.getByText("Now vs Model A")).toBeInTheDocument();
   });
 });
 

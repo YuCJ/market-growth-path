@@ -6,17 +6,13 @@ import {
   toIsoDate,
 } from "./time";
 import type {
+  BrokenTrendResult,
   DeterministicTrendResult,
-  ForecastPoint,
   PreparedMarketSeries,
-  RandomWalkBacktestResult,
-  RandomWalkDriftResult,
   RollingReturnPoint,
   TrendReachDateResult,
 } from "./types";
 
-const Z80 = 1.2816;
-const Z95 = 1.96;
 const MIN_FUTURE_REACH_YEARS = 1 / DAYS_PER_YEAR;
 
 export function fitDeterministicTrend(
@@ -76,152 +72,143 @@ export function fitDeterministicTrend(
   };
 }
 
-export function fitRandomWalkWithDrift(
+/**
+ * Fits one trend line that is allowed to change its growth rate once, on
+ * `breakDate`: ln(V) = a + b * t + d * max(0, t - breakTime).
+ *
+ * The two straight pieces meet at the break, so the line bends there but does
+ * not jump. This is the "changing growth" trend of Perron (1989). All three
+ * numbers are estimated together by least squares on the whole history.
+ *
+ * Returns null when either side of the break has fewer than three rows, because
+ * a growth rate cannot be read from one or two points.
+ */
+export function fitBrokenTrend(
   series: PreparedMarketSeries,
-): RandomWalkDriftResult {
-  return fitRandomWalkRows(series.rows);
-}
-
-function fitRandomWalkRows(
-  rows: PreparedMarketSeries["rows"],
-): RandomWalkDriftResult {
-  const logReturns = rows.slice(1).map((row, index) => ({
-    date: row.date,
-    deltaYears: elapsedYears(rows[index].dateObj, row.dateObj),
-    logReturn: row.logIndex - rows[index].logIndex,
-  }));
-  const totalLogReturn = logReturns.reduce((total, row) => total + row.logReturn, 0);
-  const totalYears = logReturns.reduce((total, row) => total + row.deltaYears, 0);
-  const mu = totalLogReturn / totalYears;
-  const residuals = logReturns.map((row) => ({
-    ...row,
-    residual: row.logReturn - mu * row.deltaYears,
-  }));
-  const annualizedVariance =
-    residuals.reduce(
-      (total, row) => total + row.residual ** 2 / row.deltaYears,
-      0,
-    ) / Math.max(residuals.length - 1, 1);
-
-  return {
-    mu,
-    annualizedDriftReturn: Math.exp(mu) - 1,
-    annualizedInnovationSd: Math.sqrt(annualizedVariance),
-    residuals,
-  };
-}
-
-export function generateForecast(
-  series: PreparedMarketSeries,
-  randomWalk: RandomWalkDriftResult,
-  years: number,
-): ForecastPoint[] {
-  const latest = series.rows[series.rows.length - 1];
-  const endDate = addYears(latest.dateObj, years);
-  const points: ForecastPoint[] = [];
-  let date = latest.dateObj;
-
-  while (date <= endDate) {
-    const hYears = elapsedYears(latest.dateObj, date);
-    points.push(
-      forecastPoint({
-        date: toIsoDate(date),
-        hYears,
-        originLogIndex: latest.logIndex,
-        randomWalk,
-        sampleYears: series.sampleYears,
-      }),
-    );
-    date = addStep(date, series.frequency);
-  }
-
-  return points;
-}
-
-export function generateRandomWalkBacktest(
-  series: PreparedMarketSeries,
-  originDate: string,
-): RandomWalkBacktestResult | null {
+  breakDate: string,
+): BrokenTrendResult | null {
   const rows = series.rows;
-  const latest = rows[rows.length - 1];
-  // The newest row is left out of the search: a comparison that starts there
-  // has nothing after it to compare against.
-  const originIndex = findLastRowIndexOnOrBefore(rows, originDate, rows.length - 2);
-  // Row 0 has no earlier data to estimate the average growth rate from.
-  if (originIndex < 1) {
+  const breakIndex = findLastRowIndexOnOrBefore(rows, breakDate);
+  if (breakIndex < 2 || breakIndex > rows.length - 4) {
     return null;
   }
 
-  const origin = rows[originIndex];
-  const trainingRows = rows.slice(0, originIndex + 1);
-  const randomWalkAtOrigin = fitRandomWalkRows(trainingRows);
-  const sampleYearsAtOrigin = elapsedYears(trainingRows[0].dateObj, origin.dateObj);
-  const path = rows.slice(originIndex).map((row) =>
-    forecastPoint({
-      date: row.date,
-      hYears: elapsedYears(origin.dateObj, row.dateObj),
-      originLogIndex: origin.logIndex,
-      randomWalk: randomWalkAtOrigin,
-      sampleYears: sampleYearsAtOrigin,
-    }),
+  const breakYears = rows[breakIndex].yearsSinceStart;
+  // Time is measured from the break so that the intercept is the trend level
+  // on the break date and the sums below stay small.
+  const design = rows.map((row) => {
+    const sinceBreak = row.yearsSinceStart - breakYears;
+    return [1, sinceBreak, Math.max(0, sinceBreak)];
+  });
+  const coefficients = solveLeastSquares(
+    design,
+    rows.map((row) => row.logIndex),
   );
-  const latestPoint = path[path.length - 1];
-  const forecastSd =
-    randomWalkAtOrigin.annualizedInnovationSd *
-    Math.sqrt(
-      latestPoint.hYears + latestPoint.hYears ** 2 / sampleYearsAtOrigin,
-    );
-  const zScore =
-    forecastSd === 0
-      ? null
-      : (latest.logIndex - Math.log(latestPoint.expected)) / forecastSd;
+  if (coefficients === null) {
+    return null;
+  }
+
+  const [levelAtBreak, slopeBefore, slopeChange] = coefficients;
+  const slopeAfter = slopeBefore + slopeChange;
+  const logTrendAt = (yearsSinceStart: number) =>
+    levelAtBreak +
+    slopeBefore * (yearsSinceStart - breakYears) +
+    slopeChange * Math.max(0, yearsSinceStart - breakYears);
+  const fitted = rows.map((row) => {
+    const trendIndex = Math.exp(logTrendAt(row.yearsSinceStart));
+    return {
+      date: row.date,
+      yearsSinceStart: row.yearsSinceStart,
+      trendIndex,
+      deviation: row.total_return_index / trendIndex - 1,
+    };
+  });
+  const latest = rows[rows.length - 1];
+  const yearsAfterBreak = latest.yearsSinceStart - breakYears;
+  const latestTrendIndex = fitted[fitted.length - 1].trendIndex;
 
   return {
-    originDate: origin.date,
-    latestDate: latest.date,
-    originIndex,
-    actualLatest: latest.total_return_index,
-    expectedLatest: latestPoint.expected,
-    gap: latest.total_return_index / latestPoint.expected - 1,
-    zScore,
-    inside80:
-      latest.total_return_index >= latestPoint.lower80 &&
-      latest.total_return_index <= latestPoint.upper80,
-    inside95:
-      latest.total_return_index >= latestPoint.lower95 &&
-      latest.total_return_index <= latestPoint.upper95,
-    annualizedDriftReturnAtOrigin: randomWalkAtOrigin.annualizedDriftReturn,
-    path,
+    breakDate: rows[breakIndex].date,
+    breakIndex,
+    slopeBefore,
+    slopeAfter,
+    annualizedReturnBefore: Math.exp(slopeBefore) - 1,
+    annualizedReturnAfter: Math.exp(slopeAfter) - 1,
+    yearsAfterBreak,
+    // The average yearly growth over N years of returns with yearly volatility
+    // s is known only to about s / sqrt(N) (Merton 1980). More frequent data
+    // does not shrink this; only more years do. Multiplying by exp(slopeAfter)
+    // turns the error of the log growth rate into the error of the yearly
+    // return that the page displays.
+    annualizedReturnAfterUncertainty:
+      (Math.exp(slopeAfter) * annualizedVolatility(rows)) /
+      Math.sqrt(yearsAfterBreak),
+    fitted,
+    latestTrendIndex,
+    currentDeviation: latest.total_return_index / latestTrendIndex - 1,
   };
 }
 
-function forecastPoint({
-  date,
-  hYears,
-  originLogIndex,
-  randomWalk,
-  sampleYears,
-}: {
-  date: string;
-  hYears: number;
-  originLogIndex: number;
-  randomWalk: RandomWalkDriftResult;
-  sampleYears: number;
-}): ForecastPoint {
-  const expectedLog = originLogIndex + randomWalk.mu * hYears;
-  const forecastSd =
-    randomWalk.annualizedInnovationSd *
-    Math.sqrt(hYears + hYears ** 2 / sampleYears);
+/** Standard deviation of log returns, scaled to one year of elapsed time. */
+function annualizedVolatility(rows: PreparedMarketSeries["rows"]): number {
+  const last = rows.length - 1;
+  const totalYears = rows[last].yearsSinceStart - rows[0].yearsSinceStart;
+  const meanGrowth = (rows[last].logIndex - rows[0].logIndex) / totalYears;
+  let sum = 0;
+  for (let index = 1; index <= last; index += 1) {
+    const deltaYears =
+      rows[index].yearsSinceStart - rows[index - 1].yearsSinceStart;
+    const surprise =
+      rows[index].logIndex - rows[index - 1].logIndex - meanGrowth * deltaYears;
+    sum += surprise ** 2 / deltaYears;
+  }
+  return Math.sqrt(sum / Math.max(last - 1, 1));
+}
 
-  return {
-    date,
-    hYears,
-    expected: Math.exp(expectedLog),
-    lower80: Math.exp(expectedLog - Z80 * forecastSd),
-    upper80: Math.exp(expectedLog + Z80 * forecastSd),
-    lower95: Math.exp(expectedLog - Z95 * forecastSd),
-    upper95: Math.exp(expectedLog + Z95 * forecastSd),
-  };
+/**
+ * Least-squares coefficients for `design * coefficients ~ values`, or null when
+ * the columns of `design` do not carry independent information.
+ */
+function solveLeastSquares(
+  design: number[][],
+  values: number[],
+): number[] | null {
+  const size = design[0].length;
+  // Normal equations (X'X) c = X'y, with X'y kept as an extra column.
+  const system = Array.from({ length: size }, (_, row) =>
+    Array.from({ length: size + 1 }, (_, column) =>
+      design.reduce(
+        (total, line, index) =>
+          total +
+          line[row] * (column < size ? line[column] : values[index]),
+        0,
+      ),
+    ),
+  );
+
+  for (let pivot = 0; pivot < size; pivot += 1) {
+    let best = pivot;
+    for (let row = pivot + 1; row < size; row += 1) {
+      if (Math.abs(system[row][pivot]) > Math.abs(system[best][pivot])) {
+        best = row;
+      }
+    }
+    if (Math.abs(system[best][pivot]) < 1e-12) {
+      return null;
+    }
+    [system[pivot], system[best]] = [system[best], system[pivot]];
+    for (let row = 0; row < size; row += 1) {
+      if (row === pivot) {
+        continue;
+      }
+      const factor = system[row][pivot] / system[pivot][pivot];
+      for (let column = pivot; column <= size; column += 1) {
+        system[row][column] -= factor * system[pivot][column];
+      }
+    }
+  }
+
+  return system.map((line, index) => line[size] / line[index]);
 }
 
 /**
@@ -246,16 +233,38 @@ export function generateTrendExtension(
   trend: DeterministicTrendResult,
   years: number,
 ): { date: string; trendIndex: number }[] {
+  return extendTrend(series, years, (yearsSinceStart) =>
+    Math.exp(trend.intercept + trend.slope * yearsSinceStart),
+  );
+}
+
+/** Continues the after-break piece of the broken trend into the future. */
+export function generateBrokenTrendExtension(
+  series: PreparedMarketSeries,
+  trend: BrokenTrendResult,
+  years: number,
+): { date: string; trendIndex: number }[] {
+  const latest = series.rows[series.rows.length - 1];
+  return extendTrend(series, years, (yearsSinceStart) =>
+    trend.latestTrendIndex *
+    Math.exp(trend.slopeAfter * (yearsSinceStart - latest.yearsSinceStart)),
+  );
+}
+
+function extendTrend(
+  series: PreparedMarketSeries,
+  years: number,
+  trendIndexAt: (yearsSinceStart: number) => number,
+): { date: string; trendIndex: number }[] {
   const latest = series.rows[series.rows.length - 1];
   const endDate = addYears(latest.dateObj, years);
   const points: { date: string; trendIndex: number }[] = [];
   let date = latest.dateObj;
 
   while (date <= endDate) {
-    const yearsSinceStart = elapsedYears(series.rows[0].dateObj, date);
     points.push({
       date: toIsoDate(date),
-      trendIndex: Math.exp(trend.intercept + trend.slope * yearsSinceStart),
+      trendIndex: trendIndexAt(elapsedYears(series.rows[0].dateObj, date)),
     });
     date = addStep(date, series.frequency);
   }

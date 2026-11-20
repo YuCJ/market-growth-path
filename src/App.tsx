@@ -3,12 +3,11 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
   calculateRollingReturns,
+  fitBrokenTrend,
   fitDeterministicTrend,
-  fitRandomWalkWithDrift,
   estimateTrendReachDate,
   findLastRowIndexOnOrBefore,
-  generateForecast,
-  generateRandomWalkBacktest,
+  generateBrokenTrendExtension,
   generateTrendExtension,
 } from "./analytics/models";
 import { addMonths, addYears, elapsedYears, toIsoDate } from "./analytics/time";
@@ -20,26 +19,24 @@ import {
 } from "./data/canonicalDatasets";
 
 const FORECAST_YEARS = 30;
-// ChatGPT became public on 2022-11-30. The default comparison starts at the
-// last data point on or before that day, so the Model B gap reads as "how far
-// the index has moved beyond average growth since generative AI arrived".
-const DEFAULT_COMPARISON_START_DATE = "2022-11-30";
-// Closer than this to the latest date, the gap is mostly a few weeks of noise.
-const MIN_COMPARISON_MONTHS_BACK = 3;
-// The main chart widens to include the start date, so this also caps how far
-// the chart can be stretched. It does not check how much earlier history is
-// left for estimating the average growth rate.
-const MAX_COMPARISON_MONTHS_BACK = 120;
+// ChatGPT became public on 2022-11-30. By default Model B lets the growth rate
+// change at the last data point on or before that day, so its line reads as
+// "the trend if generative AI changed how fast the index grows".
+const DEFAULT_GROWTH_CHANGE_DATE = "2022-11-30";
+// A growth rate read from less than a year of data is mostly noise.
+const MIN_CHANGE_MONTHS_BACK = 12;
+// The main chart widens to include the change date, so this caps how far the
+// chart can be stretched.
+const MAX_CHANGE_MONTHS_BACK = 120;
 const ROLLING_WINDOWS = [5, 10, 20];
 const ACTUAL_COLOR = "#0f766e";
 const MODEL_A_COLOR = "#2563eb";
-const MODEL_B_START_COLOR = "#e11d48";
+const MODEL_B_COLOR = "#b45309";
 
 type Analysis = {
   trend: ReturnType<typeof fitDeterministicTrend>;
-  randomWalk: ReturnType<typeof fitRandomWalkWithDrift>;
-  forecast: ReturnType<typeof generateForecast>;
-  backtest: ReturnType<typeof generateRandomWalkBacktest>;
+  brokenTrend: ReturnType<typeof fitBrokenTrend>;
+  brokenTrendExtension: ReturnType<typeof generateBrokenTrendExtension>;
   trendExtension: ReturnType<typeof generateTrendExtension>;
   trendReachLatestIndex: ReturnType<typeof estimateTrendReachDate>;
   rollingReturns: ReturnType<typeof calculateRollingReturns>;
@@ -52,8 +49,8 @@ const DEFAULT_DATASET_ID = "market-total-return-iwda-lon-weekly-v1";
 export default function App() {
   const [datasetId, setDatasetId] = useState(DEFAULT_DATASET_ID);
   const [yScale, setYScale] = useState<"log" | "value">("value");
-  const [comparisonStartDate, setComparisonStartDate] = useState(
-    DEFAULT_COMPARISON_START_DATE,
+  const [growthChangeDate, setGrowthChangeDate] = useState(
+    DEFAULT_GROWTH_CHANGE_DATE,
   );
   const loaded = useMemo(
     () =>
@@ -64,27 +61,28 @@ export default function App() {
     [datasetId],
   );
   const rows = loaded.series.rows;
-  const startRange = useMemo(
-    () => getComparisonStartRange(loaded.series),
+  const changeRange = useMemo(
+    () => getGrowthChangeRange(loaded.series),
     [loaded],
   );
   // The chosen date is kept as a calendar date, so it stays on the same event
   // when the dataset changes or new weekly data arrives. Each dataset then
   // maps it to its own nearest earlier row.
-  const selectedStartIndex = clamp(
-    findLastRowIndexOnOrBefore(rows, comparisonStartDate),
-    startRange.minIndex,
-    startRange.maxIndex,
+  const selectedChangeIndex = clamp(
+    findLastRowIndexOnOrBefore(rows, growthChangeDate),
+    changeRange.minIndex,
+    changeRange.maxIndex,
   );
-  const selectedStartDate = rows[selectedStartIndex].date;
+  const selectedChangeDate = rows[selectedChangeIndex].date;
   const analysis = useMemo(() => {
     const trend = fitDeterministicTrend(loaded.series);
-    const randomWalk = fitRandomWalkWithDrift(loaded.series);
+    const brokenTrend = fitBrokenTrend(loaded.series, selectedChangeDate);
     return {
       trend,
-      randomWalk,
-      forecast: generateForecast(loaded.series, randomWalk, FORECAST_YEARS),
-      backtest: generateRandomWalkBacktest(loaded.series, selectedStartDate),
+      brokenTrend,
+      brokenTrendExtension: brokenTrend
+        ? generateBrokenTrendExtension(loaded.series, brokenTrend, FORECAST_YEARS)
+        : [],
       trendExtension: generateTrendExtension(
         loaded.series,
         trend,
@@ -97,23 +95,20 @@ export default function App() {
       ),
       rollingReturns: calculateRollingReturns(loaded.series, ROLLING_WINDOWS),
     };
-  }, [loaded, selectedStartDate]);
+  }, [loaded, selectedChangeDate]);
   const latest = loaded.series.rows[loaded.series.rows.length - 1];
-  const backtest = analysis.backtest;
-  const backtestStartIndex = backtest
-    ? loaded.series.rows[backtest.originIndex].total_return_index
-    : null;
-  const updateComparisonStart = (rowIndex: string) =>
-    setComparisonStartDate(rows[Number(rowIndex)].date);
+  const brokenTrend = analysis.brokenTrend;
+  const updateGrowthChangeDate = (rowIndex: string) =>
+    setGrowthChangeDate(rows[Number(rowIndex)].date);
   const rSquaredValue = formatNumber(analysis.trend.rSquared, 3);
   const rSquaredPercent = formatPercent(analysis.trend.rSquared);
   const defaultVisibleStart = toIsoDate(addYears(latest.dateObj, -5));
   const visibleDateRange = {
-    // A Model B start date more than five years back would otherwise sit
-    // outside the chart, leaving a dotted line with no visible beginning.
+    // A change date more than five years back would otherwise sit outside the
+    // chart, hiding the point where the Model B line bends.
     min:
-      backtest && backtest.originDate < defaultVisibleStart
-        ? backtest.originDate
+      selectedChangeDate < defaultVisibleStart
+        ? selectedChangeDate
         : defaultVisibleStart,
     max: toIsoDate(addYears(latest.dateObj, 5)),
   };
@@ -131,8 +126,8 @@ export default function App() {
               Long-term market growth dashboard
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Deterministic trend and random walk with drift views for the selected
-              canonical market dataset.
+              Two trend lines for the selected market dataset: one with a single
+              growth rate, one whose growth rate changes once.
             </p>
           </div>
 
@@ -154,32 +149,32 @@ export default function App() {
 
             <div className="min-w-64 text-sm font-medium text-slate-700">
               <span className="mb-1 flex flex-col">
-                <span>Compare with average growth since</span>
+                <span>Model B growth rate changes on</span>
                 <span className="font-semibold text-slate-950">
-                  {`${selectedStartDate} (${formatNumber(
-                    elapsedYears(rows[selectedStartIndex].dateObj, latest.dateObj),
+                  {`${selectedChangeDate} (${formatNumber(
+                    elapsedYears(rows[selectedChangeIndex].dateObj, latest.dateObj),
                     1,
                   )} years ago)`}
                 </span>
               </span>
               <input
-                aria-label="Comparison start date"
+                aria-label="Model B growth rate change date"
                 className="h-10 w-full accent-teal-700"
                 type="range"
-                min={startRange.minIndex}
-                max={startRange.maxIndex}
+                min={changeRange.minIndex}
+                max={changeRange.maxIndex}
                 step={1}
-                value={selectedStartIndex}
+                value={selectedChangeIndex}
                 onInput={(event) =>
-                  updateComparisonStart(event.currentTarget.value)
+                  updateGrowthChangeDate(event.currentTarget.value)
                 }
                 onChange={(event) =>
-                  updateComparisonStart(event.currentTarget.value)
+                  updateGrowthChangeDate(event.currentTarget.value)
                 }
               />
               <span className="flex justify-between text-xs text-slate-500">
-                <span>{rows[startRange.minIndex].date}</span>
-                <span>{rows[startRange.maxIndex].date}</span>
+                <span>{rows[changeRange.minIndex].date}</span>
+                <span>{rows[changeRange.maxIndex].date}</span>
               </span>
             </div>
 
@@ -199,7 +194,7 @@ export default function App() {
 
         {/* Primary growth path chart */}
         <section className="py-5">
-          <Panel title="Index, trend, and forecast paths">
+          <Panel title="Index and model trend lines">
             <Chart
               option={buildMainChart(
                 loaded,
@@ -214,22 +209,30 @@ export default function App() {
                 color={MODEL_A_COLOR}
                 label="Now vs Model A"
                 value={formatSignedPercent(analysis.trend.currentDeviation)}
-                note="最新指數比長期趨勢線（藍點）高或低多少。"
+                note="如果成長率從頭到尾沒變（藍線），最新指數比線高或低多少。"
               />
               <GapReadout
-                color={MODEL_B_START_COLOR}
-                label={`Now vs Model B since ${selectedStartDate}`}
-                value={backtest ? formatSignedPercent(backtest.gap) : "n/a"}
-                note={
-                  backtest && backtestStartIndex !== null
-                    ? `從 ${backtest.originDate} 到現在，指數實際變動 ${formatSignedPercent(backtest.actualLatest / backtestStartIndex - 1)}；照當時為止的長期平均成長率應該是 ${formatSignedPercent(backtest.expectedLatest / backtestStartIndex - 1)}（紅點）。差距就是這段期間多漲或少漲的部分。`
-                    : "資料不足，無法比較。"
+                color={MODEL_B_COLOR}
+                label="Now vs Model B"
+                value={
+                  brokenTrend
+                    ? formatSignedPercent(brokenTrend.currentDeviation)
+                    : "n/a"
                 }
+                note={`如果成長率在 ${selectedChangeDate} 改變了（橘線），最新指數比線高或低多少。`}
               />
               <GapReadout
-                label="Model A reaches latest index"
-                value={formatTrendReachDate(analysis.trendReachLatestIndex)}
-                note="趨勢線自己長到現在這個水準的日期。"
+                label="Model B growth rate a year"
+                value={
+                  brokenTrend
+                    ? `${formatPercent(brokenTrend.annualizedReturnBefore)} → ${formatPercent(brokenTrend.annualizedReturnAfter)}`
+                    : "n/a"
+                }
+                note={
+                  brokenTrend
+                    ? `${selectedChangeDate} 之前與之後的每年成長率。之後只有 ${formatNumber(brokenTrend.yearsAfterBreak, 1)} 年資料，後面這個數字的誤差大約是正負 ${formatNumber(brokenTrend.annualizedReturnAfterUncertainty * 100, 0)} 個百分點。`
+                    : "這個日期前後的資料不足，無法估計。"
+                }
               />
             </div>
           </Panel>
@@ -239,13 +242,13 @@ export default function App() {
         <section className="grid gap-4 pb-5 text-sm leading-6 text-slate-700 lg:grid-cols-3">
           <Explanation
             title="Model A"
-            body="Guess: the index keeps returning to one smooth long-term trend line. The line is fitted to the whole history, so it does not pass through the latest index. The gap between the two answers: if the trend line is the normal level, how far above or below it are we now?"
-            translation="猜測：指數長期會回到一條平滑的趨勢線附近。這條線用整段歷史估計，所以不會通過最新指數。兩者的差距回答的是：如果趨勢線才是正常水準，現在高了或低了多少？"
+            body="Guess: the growth rate has been the same all along. One smooth trend line is fitted to the whole history. Its gap to the latest index answers: if nothing has changed, how far above or below the normal level are we now?"
+            translation="猜測：成長率從頭到尾都一樣。用整段歷史估出一條平滑的趨勢線。它和最新指數的差距回答的是：如果什麼都沒變，現在比正常水準高或低多少？"
           />
           <Explanation
             title="Model B"
-            body={`Guess: past rises and falls are never taken back; the index simply continues from wherever it is at its long-run average growth rate. So this model has no fixed line to compare against. You pick a start date with the slider, and the dotted line shows where average growth alone would have taken the index from that date. The gap to the latest index is how much more or less the index moved than an average stretch of the same length. The start date is not the date of a shock; it is only where the counting begins. Set it just before an event begins, as close as you can, to see how much of that event is still in the index; the earlier you set it, the more unrelated moves get mixed in. The default is the last data point before ChatGPT became public on ${DEFAULT_COMPARISON_START_DATE}, which shows the gap since generative AI arrived. The solid orange line is the same average growth continued from the latest index into the future.`}
-            translation={`猜測：過去的漲跌不會被收回，指數只是從當下的水準照長期平均成長率繼續走。所以這個模型沒有一條固定的線可以比。你用滑桿選一個起算日，虛線是「從那天起只照平均成長率走」會到的位置；它和最新指數的差距，就是這段期間比平均多漲或少漲了多少。起算日不是衝擊發生的日子，只是開始計算的地方；想知道某次事件還留下多少影響，就把起算日設在事件開始之前、越接近越好；拉得越早，混進的無關漲跌越多。預設值是 ChatGPT 在 ${DEFAULT_COMPARISON_START_DATE} 公開前的最後一筆資料，用來看生成式 AI 出現以來的差距。橘色實線則是從最新指數出發，照同樣的平均成長率往未來延伸。`}
+            body={`Guess: the growth rate changed once, on the date set with the slider. It is still one line, but it bends on that date: one growth rate before, another after, and the dashed part continues the later rate into the future. The default date is the last data point before ChatGPT became public on ${DEFAULT_GROWTH_CHANGE_DATE}, so the line shows the trend if generative AI changed how fast the index grows. Two cautions. The later growth rate comes from only a few years of data, so it is rough and will move as new data arrives. And a temporary surge looks the same as a lasting change over a few years: a small gap to Model B with a large gap to Model A means recent prices fit "growth sped up" better than "nothing changed", not that the speed-up will last.`}
+            translation={`猜測：成長率在滑桿選的那一天改變了一次。它仍然是一條線，只是在那一天轉彎：之前一個成長率、之後另一個，虛線部分是照之後的成長率往未來延伸。預設日期是 ChatGPT 在 ${DEFAULT_GROWTH_CHANGE_DATE} 公開前的最後一筆資料，所以這條線代表「如果生成式 AI 改變了指數成長的速度」的趨勢。兩個提醒：之後的成長率只靠幾年資料估計，很粗略，新資料進來還會變動。另外，短短幾年內，暫時的大漲和長期的改變看起來一模一樣；離模型 B 很近、離模型 A 很遠，只代表最近的價格比較符合「成長變快了」而不是「什麼都沒變」，不代表會一直這麼快。`}
           />
           <Explanation
             title="R-squared"
@@ -266,29 +269,13 @@ export default function App() {
             value={formatPercent(analysis.trend.annualizedTrendReturn)}
           />
           <Metric
-            label="Model B drift return"
-            value={formatPercent(analysis.randomWalk.annualizedDriftReturn)}
+            label="Model A reaches latest index"
+            value={formatTrendReachDate(analysis.trendReachLatestIndex)}
           />
           <Metric label="Sample years" value={formatNumber(loaded.series.sampleYears, 1)} />
           <Metric label="Frequency" value={loaded.series.frequency} />
           <Metric label="Data points" value={formatNumber(loaded.series.rows.length, 0)} />
           <Metric label="R-squared" value={formatNumber(analysis.trend.rSquared, 3)} />
-          <Metric
-            label="Model B expected today"
-            value={
-              backtest
-                ? formatNumber(backtest.expectedLatest)
-                : "n/a"
-            }
-          />
-          <Metric
-            label="Model B backtest band"
-            value={
-              backtest
-                ? formatBacktestBand(backtest.inside80, backtest.inside95)
-                : "n/a"
-            }
-          />
         </section>
 
         {/* Selected canonical dataset metadata */}
@@ -311,7 +298,7 @@ export default function App() {
         {/* Secondary analysis charts */}
         <section className="grid gap-5">
           <div className="grid gap-5 xl:grid-cols-2">
-            <Panel title="Deviation from deterministic trend">
+            <Panel title="Deviation from each model's trend line">
               <Chart option={buildDeviationChart(analysis, visibleDateRange)} />
             </Panel>
             <Panel title="Log returns and rolling annualized returns">
@@ -439,27 +426,20 @@ function buildMainChart(
     point.date,
     point.trendIndex,
   ]);
-  const forecast: ChartPoint[] = analysis.forecast.map((point) => [
-    point.date,
-    point.expected,
-  ]);
-  const backtestForecast: ChartPoint[] =
-    analysis.backtest?.path.map((point) => [
-      point.date,
-      point.expected,
-    ]) ?? [];
-  const backtestPathLabel = analysis.backtest
-    ? `Model B: average growth since ${analysis.backtest.originDate}`
-    : "Model B: average growth since start date";
+  const brokenFitted: ChartPoint[] =
+    analysis.brokenTrend?.fitted.map((point) => [point.date, point.trendIndex]) ??
+    [];
+  const brokenExtension: ChartPoint[] = analysis.brokenTrendExtension.map(
+    (point) => [point.date, point.trendIndex],
+  );
   const latestRow = loaded.series.rows[loaded.series.rows.length - 1];
-  const backtestStart = analysis.backtest?.path[0];
-  const backtestEnd = analysis.backtest?.path[analysis.backtest.path.length - 1];
+  const bend = analysis.brokenTrend?.fitted[analysis.brokenTrend.breakIndex];
   const visiblePrimaryLines = [
     ...filterVisibleData(historical, visibleDateRange),
     ...filterVisibleData(fitted, visibleDateRange),
     ...filterVisibleData(trendExtension, visibleDateRange),
-    ...filterVisibleData(forecast, visibleDateRange),
-    ...filterVisibleData(backtestForecast, visibleDateRange),
+    ...filterVisibleData(brokenFitted, visibleDateRange),
+    ...filterVisibleData(brokenExtension, visibleDateRange),
   ];
 
   return baseChartOption({
@@ -470,8 +450,8 @@ function buildMainChart(
       "Actual index",
       "Model A fitted trend",
       "Model A extension",
-      "Model B expected path",
-      backtestPathLabel,
+      "Model B fitted trend",
+      "Model B extension",
     ],
     series: [
       {
@@ -511,30 +491,31 @@ function buildMainChart(
         2,
         "dashed",
       ),
-      line(
-        "Model B expected path",
-        filterVisibleData(forecast, visibleDateRange),
-        "#b45309",
-        2.4,
-      ),
       {
         ...line(
-          backtestPathLabel,
-          filterVisibleData(backtestForecast, visibleDateRange),
-          MODEL_B_START_COLOR,
-          2.2,
-          "dotted",
+          "Model B fitted trend",
+          filterVisibleData(brokenFitted, visibleDateRange),
+          MODEL_B_COLOR,
+          2,
         ),
+        // One dot where the line bends, one for its value at the latest date.
         markPoint: dots(
-          MODEL_B_START_COLOR,
-          backtestStart && backtestEnd
+          MODEL_B_COLOR,
+          analysis.brokenTrend && bend
             ? [
-                [backtestStart.date, backtestStart.expected],
-                [backtestEnd.date, backtestEnd.expected],
+                [bend.date, bend.trendIndex],
+                [latestRow.date, analysis.brokenTrend.latestTrendIndex],
               ]
             : [],
         ),
       },
+      line(
+        "Model B extension",
+        filterVisibleData(brokenExtension, visibleDateRange),
+        "#f59e0b",
+        2,
+        "dashed",
+      ),
     ],
   });
 }
@@ -547,15 +528,27 @@ function buildDeviationChart(
     yScale: "value",
     visibleDateRange,
     yFormatter: (value) => `${formatNumber(Number(value) * 100, 0)}%`,
-    legend: ["Deviation"],
+    legend: ["Model A", "Model B"],
     series: [
       line(
-        "Deviation",
+        "Model A",
         filterVisibleData(
           analysis.trend.fitted.map((point) => [point.date, point.deviation]),
           visibleDateRange,
         ),
-        "#7c3aed",
+        MODEL_A_COLOR,
+        2,
+      ),
+      line(
+        "Model B",
+        filterVisibleData(
+          analysis.brokenTrend?.fitted.map((point) => [
+            point.date,
+            point.deviation,
+          ]) ?? [],
+          visibleDateRange,
+        ),
+        MODEL_B_COLOR,
         2,
       ),
     ],
@@ -768,20 +761,22 @@ function rollingColor(windowYears: number): string {
   return "#b45309";
 }
 
-function getComparisonStartRange(series: PreparedMarketSeries): {
+function getGrowthChangeRange(series: PreparedMarketSeries): {
   minIndex: number;
   maxIndex: number;
 } {
   const rows = series.rows;
   const latest = rows[rows.length - 1];
-  // Row 0 cannot be a start: the average growth rate before it is unknown.
-  const earliestIndex = Math.min(1, rows.length - 1);
-  const latestAllowedIndex = Math.max(earliestIndex, rows.length - 2);
+  // Model B needs at least three rows before the change date to read a
+  // growth rate from them.
+  const earliestIndex = Math.min(2, rows.length - 1);
+  // ...and at least three rows after it.
+  const latestAllowedIndex = Math.max(earliestIndex, rows.length - 4);
   const oldestAllowed = toIsoDate(
-    addMonths(latest.dateObj, -MAX_COMPARISON_MONTHS_BACK),
+    addMonths(latest.dateObj, -MAX_CHANGE_MONTHS_BACK),
   );
   const newestAllowed = toIsoDate(
-    addMonths(latest.dateObj, -MIN_COMPARISON_MONTHS_BACK),
+    addMonths(latest.dateObj, -MIN_CHANGE_MONTHS_BACK),
   );
   const firstInside = rows.findIndex((row) => row.date >= oldestAllowed);
   const maxIndex = clamp(
@@ -810,16 +805,6 @@ function formatSignedPercent(value: number): string {
     return formatPercent(0);
   }
   return value > 0 ? `+${text}` : text;
-}
-
-function formatBacktestBand(inside80: boolean, inside95: boolean): string {
-  if (inside80) {
-    return "Inside 80%";
-  }
-  if (inside95) {
-    return "Inside 95%";
-  }
-  return "Outside 95%";
 }
 
 function formatTrendReachDate(

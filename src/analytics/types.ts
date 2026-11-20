@@ -47,40 +47,28 @@ export type TrendReachDateResult = {
   yearsFromLatest: number;
 };
 
-export type RandomWalkDriftResult = {
-  mu: number;
-  annualizedDriftReturn: number;
-  annualizedInnovationSd: number;
-  residuals: {
+export type BrokenTrendResult = {
+  breakDate: string;
+  breakIndex: number;
+  slopeBefore: number;
+  slopeAfter: number;
+  annualizedReturnBefore: number;
+  annualizedReturnAfter: number;
+  yearsAfterBreak: number;
+  /**
+   * Rough one-standard-deviation error of `annualizedReturnAfter`, in the same
+   * units (0.09 means about nine percentage points a year). It only reflects
+   * how few years lie after the break.
+   */
+  annualizedReturnAfterUncertainty: number;
+  fitted: {
     date: string;
-    deltaYears: number;
-    logReturn: number;
-    residual: number;
+    yearsSinceStart: number;
+    trendIndex: number;
+    deviation: number;
   }[];
-};
-
-export type ForecastPoint = {
-  date: string;
-  hYears: number;
-  expected: number;
-  lower80: number;
-  upper80: number;
-  lower95: number;
-  upper95: number;
-};
-
-export type RandomWalkBacktestResult = {
-  originDate: string;
-  latestDate: string;
-  originIndex: number;
-  actualLatest: number;
-  expectedLatest: number;
-  gap: number;
-  zScore: number | null;
-  inside80: boolean;
-  inside95: boolean;
-  annualizedDriftReturnAtOrigin: number;
-  path: ForecastPoint[];
+  latestTrendIndex: number;
+  currentDeviation: number;
 };
 
 export type RollingReturnPoint = {
