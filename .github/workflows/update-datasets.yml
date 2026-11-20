@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  # Needed to start the Pages deploy after pushing new data.
+  actions: write
 
 concurrency:
   group: update-datasets
@@ -73,7 +75,12 @@ jobs:
       - name: Validate
         run: npm test
 
-      - name: Commit dataset changes
+      # A push made with GITHUB_TOKEN does not start the deploy workflow's
+      # push trigger, but a workflow_dispatch does, so start it explicitly
+      # and only when new data was pushed.
+      - name: Commit dataset changes and deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "yucj"
           git config user.email "nakts0123@gmail.com"
@@ -83,4 +90,5 @@ jobs:
           else
             git commit -m "chore(data): update weekly market datasets"
             git push
+            gh workflow run deploy-pages.yml --ref master
           fi
