@@ -1,6 +1,5 @@
 import {
   DAYS_PER_YEAR,
-  addMonths,
   addStep,
   addYears,
   elapsedYears,
@@ -141,12 +140,15 @@ export function generateForecast(
 
 export function generateRandomWalkBacktest(
   series: PreparedMarketSeries,
-  lookbackMonths: number,
+  originDate: string,
 ): RandomWalkBacktestResult | null {
   const rows = series.rows;
   const latest = rows[rows.length - 1];
-  const originIndex = findBacktestOriginIndex(rows, latest, lookbackMonths);
-  if (originIndex === null || originIndex < 1) {
+  // The newest row is left out of the search: a comparison that starts there
+  // has nothing after it to compare against.
+  const originIndex = findLastRowIndexOnOrBefore(rows, originDate, rows.length - 2);
+  // Row 0 has no earlier data to estimate the average growth rate from.
+  if (originIndex < 1) {
     return null;
   }
 
@@ -175,7 +177,6 @@ export function generateRandomWalkBacktest(
       : (latest.logIndex - Math.log(latestPoint.expected)) / forecastSd;
 
   return {
-    lookbackMonths,
     originDate: origin.date,
     latestDate: latest.date,
     originIndex,
@@ -223,18 +224,21 @@ function forecastPoint({
   };
 }
 
-function findBacktestOriginIndex(
+/**
+ * Index of the latest row dated on or before `date`, searching backwards from
+ * `fromIndex`. Returns -1 when every row searched is later than `date`.
+ */
+export function findLastRowIndexOnOrBefore(
   rows: PreparedMarketSeries["rows"],
-  latest: PreparedMarketSeries["rows"][number],
-  lookbackMonths: number,
-): number | null {
-  const targetDate = addMonths(latest.dateObj, -lookbackMonths);
-  for (let index = rows.length - 2; index >= 0; index -= 1) {
-    if (rows[index].dateObj <= targetDate) {
+  date: string,
+  fromIndex = rows.length - 1,
+): number {
+  for (let index = fromIndex; index >= 0; index -= 1) {
+    if (rows[index].date <= date) {
       return index;
     }
   }
-  return null;
+  return -1;
 }
 
 export function generateTrendExtension(

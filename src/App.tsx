@@ -6,11 +6,12 @@ import {
   fitDeterministicTrend,
   fitRandomWalkWithDrift,
   estimateTrendReachDate,
+  findLastRowIndexOnOrBefore,
   generateForecast,
   generateRandomWalkBacktest,
   generateTrendExtension,
 } from "./analytics/models";
-import { addYears, elapsedYears, toIsoDate } from "./analytics/time";
+import { addMonths, addYears, elapsedYears, toIsoDate } from "./analytics/time";
 import type { PreparedMarketSeries } from "./analytics/types";
 import { Chart } from "./components/Chart";
 import {
@@ -19,9 +20,16 @@ import {
 } from "./data/canonicalDatasets";
 
 const FORECAST_YEARS = 30;
-const DEFAULT_BACKTEST_LOOKBACK_MONTHS = 12;
-const MIN_BACKTEST_LOOKBACK_MONTHS = 3;
-const MAX_BACKTEST_LOOKBACK_MONTHS = 120;
+// ChatGPT became public on 2022-11-30. The default comparison starts at the
+// last data point on or before that day, so the Model B gap reads as "how far
+// the index has moved beyond average growth since generative AI arrived".
+const DEFAULT_COMPARISON_START_DATE = "2022-11-30";
+// Closer than this to the latest date, the gap is mostly a few weeks of noise.
+const MIN_COMPARISON_MONTHS_BACK = 3;
+// The main chart widens to include the start date, so this also caps how far
+// the chart can be stretched. It does not check how much earlier history is
+// left for estimating the average growth rate.
+const MAX_COMPARISON_MONTHS_BACK = 120;
 const ROLLING_WINDOWS = [5, 10, 20];
 const ACTUAL_COLOR = "#0f766e";
 const MODEL_A_COLOR = "#2563eb";
@@ -44,8 +52,8 @@ const DEFAULT_DATASET_ID = "market-total-return-iwda-lon-weekly-v1";
 export default function App() {
   const [datasetId, setDatasetId] = useState(DEFAULT_DATASET_ID);
   const [yScale, setYScale] = useState<"log" | "value">("value");
-  const [backtestLookbackMonths, setBacktestLookbackMonths] = useState(
-    DEFAULT_BACKTEST_LOOKBACK_MONTHS,
+  const [comparisonStartDate, setComparisonStartDate] = useState(
+    DEFAULT_COMPARISON_START_DATE,
   );
   const loaded = useMemo(
     () =>
@@ -55,15 +63,20 @@ export default function App() {
       ),
     [datasetId],
   );
-  const backtestRange = useMemo(
-    () => getBacktestLookbackRange(loaded.series),
+  const rows = loaded.series.rows;
+  const startRange = useMemo(
+    () => getComparisonStartRange(loaded.series),
     [loaded],
   );
-  const selectedBacktestLookbackMonths = clamp(
-    backtestLookbackMonths,
-    backtestRange.min,
-    backtestRange.max,
+  // The chosen date is kept as a calendar date, so it stays on the same event
+  // when the dataset changes or new weekly data arrives. Each dataset then
+  // maps it to its own nearest earlier row.
+  const selectedStartIndex = clamp(
+    findLastRowIndexOnOrBefore(rows, comparisonStartDate),
+    startRange.minIndex,
+    startRange.maxIndex,
   );
+  const selectedStartDate = rows[selectedStartIndex].date;
   const analysis = useMemo(() => {
     const trend = fitDeterministicTrend(loaded.series);
     const randomWalk = fitRandomWalkWithDrift(loaded.series);
@@ -71,10 +84,7 @@ export default function App() {
       trend,
       randomWalk,
       forecast: generateForecast(loaded.series, randomWalk, FORECAST_YEARS),
-      backtest: generateRandomWalkBacktest(
-        loaded.series,
-        selectedBacktestLookbackMonths,
-      ),
+      backtest: generateRandomWalkBacktest(loaded.series, selectedStartDate),
       trendExtension: generateTrendExtension(
         loaded.series,
         trend,
@@ -87,15 +97,14 @@ export default function App() {
       ),
       rollingReturns: calculateRollingReturns(loaded.series, ROLLING_WINDOWS),
     };
-  }, [loaded, selectedBacktestLookbackMonths]);
+  }, [loaded, selectedStartDate]);
   const latest = loaded.series.rows[loaded.series.rows.length - 1];
   const backtest = analysis.backtest;
   const backtestStartIndex = backtest
     ? loaded.series.rows[backtest.originIndex].total_return_index
     : null;
-  const backtestLabel = formatLookbackLabel(selectedBacktestLookbackMonths);
-  const updateBacktestLookback = (value: string) =>
-    setBacktestLookbackMonths(Number(value));
+  const updateComparisonStart = (rowIndex: string) =>
+    setComparisonStartDate(rows[Number(rowIndex)].date);
   const rSquaredValue = formatNumber(analysis.trend.rSquared, 3);
   const rSquaredPercent = formatPercent(analysis.trend.rSquared);
   const defaultVisibleStart = toIsoDate(addYears(latest.dateObj, -5));
@@ -147,28 +156,30 @@ export default function App() {
               <span className="mb-1 flex flex-col">
                 <span>Compare with average growth since</span>
                 <span className="font-semibold text-slate-950">
-                  {formatLookbackDuration(selectedBacktestLookbackMonths)} ago
-                  {backtest ? ` (${backtest.originDate})` : ""}
+                  {`${selectedStartDate} (${formatNumber(
+                    elapsedYears(rows[selectedStartIndex].dateObj, latest.dateObj),
+                    1,
+                  )} years ago)`}
                 </span>
               </span>
               <input
-                aria-label="Comparison start date, months before the latest date"
+                aria-label="Comparison start date"
                 className="h-10 w-full accent-teal-700"
                 type="range"
-                min={backtestRange.min}
-                max={backtestRange.max}
+                min={startRange.minIndex}
+                max={startRange.maxIndex}
                 step={1}
-                value={selectedBacktestLookbackMonths}
+                value={selectedStartIndex}
                 onInput={(event) =>
-                  updateBacktestLookback(event.currentTarget.value)
+                  updateComparisonStart(event.currentTarget.value)
                 }
                 onChange={(event) =>
-                  updateBacktestLookback(event.currentTarget.value)
+                  updateComparisonStart(event.currentTarget.value)
                 }
               />
               <span className="flex justify-between text-xs text-slate-500">
-                <span>{formatLookbackDuration(backtestRange.min)} ago</span>
-                <span>{formatLookbackDuration(backtestRange.max)} ago</span>
+                <span>{rows[startRange.minIndex].date}</span>
+                <span>{rows[startRange.maxIndex].date}</span>
               </span>
             </div>
 
@@ -195,7 +206,6 @@ export default function App() {
                 analysis,
                 yScale,
                 visibleDateRange,
-                backtestLabel,
               )}
               height={460}
             />
@@ -208,7 +218,7 @@ export default function App() {
               />
               <GapReadout
                 color={MODEL_B_START_COLOR}
-                label={`Now vs Model B from ${backtestLabel} ago`}
+                label={`Now vs Model B since ${selectedStartDate}`}
                 value={backtest ? formatSignedPercent(backtest.gap) : "n/a"}
                 note={
                   backtest && backtestStartIndex !== null
@@ -234,8 +244,8 @@ export default function App() {
           />
           <Explanation
             title="Model B"
-            body="Guess: past rises and falls are never taken back; the index simply continues from wherever it is at its long-run average growth rate. So this model has no fixed line to compare against. You pick a start date with the slider, and the dotted line shows where average growth alone would have taken the index from that date. The gap to the latest index is how much more or less the index moved than an average stretch of the same length. The start date is not the date of a shock; it is only where the counting begins. Set it just before an event to see how much of that event is still in the index. The solid orange line is the same average growth continued from the latest index into the future."
-            translation="猜測：過去的漲跌不會被收回，指數只是從當下的水準照長期平均成長率繼續走。所以這個模型沒有一條固定的線可以比。你用滑桿選一個起算日，虛線是「從那天起只照平均成長率走」會到的位置；它和最新指數的差距，就是這段期間比平均多漲或少漲了多少。起算日不是衝擊發生的日子，只是開始計算的地方；想知道某次事件還留下多少影響，就把起算日設在事件之前。橘色實線則是從最新指數出發，照同樣的平均成長率往未來延伸。"
+            body={`Guess: past rises and falls are never taken back; the index simply continues from wherever it is at its long-run average growth rate. So this model has no fixed line to compare against. You pick a start date with the slider, and the dotted line shows where average growth alone would have taken the index from that date. The gap to the latest index is how much more or less the index moved than an average stretch of the same length. The start date is not the date of a shock; it is only where the counting begins. Set it just before an event begins, as close as you can, to see how much of that event is still in the index; the earlier you set it, the more unrelated moves get mixed in. The default is the last data point before ChatGPT became public on ${DEFAULT_COMPARISON_START_DATE}, which shows the gap since generative AI arrived. The solid orange line is the same average growth continued from the latest index into the future.`}
+            translation={`猜測：過去的漲跌不會被收回，指數只是從當下的水準照長期平均成長率繼續走。所以這個模型沒有一條固定的線可以比。你用滑桿選一個起算日，虛線是「從那天起只照平均成長率走」會到的位置；它和最新指數的差距，就是這段期間比平均多漲或少漲了多少。起算日不是衝擊發生的日子，只是開始計算的地方；想知道某次事件還留下多少影響，就把起算日設在事件開始之前、越接近越好；拉得越早，混進的無關漲跌越多。預設值是 ChatGPT 在 ${DEFAULT_COMPARISON_START_DATE} 公開前的最後一筆資料，用來看生成式 AI 出現以來的差距。橘色實線則是從最新指數出發，照同樣的平均成長率往未來延伸。`}
           />
           <Explanation
             title="R-squared"
@@ -264,7 +274,7 @@ export default function App() {
           <Metric label="Data points" value={formatNumber(loaded.series.rows.length, 0)} />
           <Metric label="R-squared" value={formatNumber(analysis.trend.rSquared, 3)} />
           <Metric
-            label={`${backtestLabel} expected today`}
+            label="Model B expected today"
             value={
               backtest
                 ? formatNumber(backtest.expectedLatest)
@@ -272,16 +282,12 @@ export default function App() {
             }
           />
           <Metric
-            label={`${backtestLabel} backtest band`}
+            label="Model B backtest band"
             value={
               backtest
                 ? formatBacktestBand(backtest.inside80, backtest.inside95)
                 : "n/a"
             }
-          />
-          <Metric
-            label={`${backtestLabel} origin date`}
-            value={backtest?.originDate ?? "n/a"}
           />
         </section>
 
@@ -420,7 +426,6 @@ function buildMainChart(
   analysis: Analysis,
   yScale: "log" | "value",
   visibleDateRange: VisibleDateRange,
-  backtestLabel: string,
 ): EChartsOption {
   const historical: ChartPoint[] = loaded.series.rows.map((row) => [
     row.date,
@@ -443,7 +448,9 @@ function buildMainChart(
       point.date,
       point.expected,
     ]) ?? [];
-  const backtestPathLabel = `Model B: average growth from ${backtestLabel} ago`;
+  const backtestPathLabel = analysis.backtest
+    ? `Model B: average growth since ${analysis.backtest.originDate}`
+    : "Model B: average growth since start date";
   const latestRow = loaded.series.rows[loaded.series.rows.length - 1];
   const backtestStart = analysis.backtest?.path[0];
   const backtestEnd = analysis.backtest?.path[analysis.backtest.path.length - 1];
@@ -761,41 +768,34 @@ function rollingColor(windowYears: number): string {
   return "#b45309";
 }
 
-function getBacktestLookbackRange(
-  series: PreparedMarketSeries,
-): { min: number; max: number } {
-  const latest = series.rows[series.rows.length - 1];
-  const earliestOrigin = series.rows[1] ?? series.rows[0];
-  const availableMonths = Math.max(
-    1,
-    Math.floor(elapsedYears(earliestOrigin.dateObj, latest.dateObj) * 12),
+function getComparisonStartRange(series: PreparedMarketSeries): {
+  minIndex: number;
+  maxIndex: number;
+} {
+  const rows = series.rows;
+  const latest = rows[rows.length - 1];
+  // Row 0 cannot be a start: the average growth rate before it is unknown.
+  const earliestIndex = Math.min(1, rows.length - 1);
+  const latestAllowedIndex = Math.max(earliestIndex, rows.length - 2);
+  const oldestAllowed = toIsoDate(
+    addMonths(latest.dateObj, -MAX_COMPARISON_MONTHS_BACK),
   );
-  const max = Math.max(
-    1,
-    Math.min(MAX_BACKTEST_LOOKBACK_MONTHS, availableMonths),
+  const newestAllowed = toIsoDate(
+    addMonths(latest.dateObj, -MIN_COMPARISON_MONTHS_BACK),
   );
-  const min = Math.min(MIN_BACKTEST_LOOKBACK_MONTHS, max);
+  const firstInside = rows.findIndex((row) => row.date >= oldestAllowed);
+  const maxIndex = clamp(
+    findLastRowIndexOnOrBefore(rows, newestAllowed),
+    earliestIndex,
+    latestAllowedIndex,
+  );
+  const minIndex = clamp(firstInside, earliestIndex, maxIndex);
 
-  return { min, max };
+  return { minIndex, maxIndex };
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-function formatLookbackLabel(months: number): string {
-  if (months % 12 === 0) {
-    return `${months / 12}Y`;
-  }
-  return `${months}M`;
-}
-
-function formatLookbackDuration(months: number): string {
-  if (months % 12 === 0) {
-    const years = months / 12;
-    return years === 1 ? "1 year" : `${years} years`;
-  }
-  return months === 1 ? "1 month" : `${months} months`;
 }
 
 function formatPercent(value: number): string {

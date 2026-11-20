@@ -1,6 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App, { placeTooltip } from "../src/App";
+import {
+  canonicalDatasets,
+  loadCanonicalDataset,
+} from "../src/data/canonicalDatasets";
 
 describe("App", () => {
   it("renders the dashboard shell", () => {
@@ -14,30 +18,40 @@ describe("App", () => {
     expect(screen.getByLabelText("Y axis")).toHaveValue("value");
   });
 
-  it("updates the Model B backtest lookback from the month slider", () => {
+  it("starts the Model B comparison just before ChatGPT became public by default", () => {
+    // Earlier renders stay in the document in this suite, so look only inside
+    // this render's container.
+    const view = within(render(<App />).container);
+
+    // IWDA.LON has weekly rows on 2022-11-25 and 2022-12-02.
+    expect(view.getByText("Now vs Model B since 2022-11-25")).toBeInTheDocument();
+  });
+
+  it("moves the Model B comparison start date with the slider", () => {
     const { container } = render(<App />);
+    const view = within(container);
+    const dataset = loadCanonicalDataset(
+      canonicalDatasets.find(
+        (candidate) => candidate.id === "market-total-return-iwda-lon-weekly-v1",
+      )!,
+    );
+    const rows = dataset.series.rows;
 
     const slider = container.querySelector('input[type="range"]');
     expect(slider).not.toBeNull();
-    expect(slider).toHaveAttribute("min", "3");
-    expect(slider).toHaveAttribute("max", "120");
     expect(slider).toHaveAttribute("step", "1");
-    expect(
-      screen.getAllByText("Now vs Model B from 1Y ago").length,
-    ).toBeGreaterThan(0);
+    const minIndex = Number(slider!.getAttribute("min"));
+    const maxIndex = Number(slider!.getAttribute("max"));
+    expect(minIndex).toBeGreaterThanOrEqual(1);
+    expect(maxIndex).toBeLessThan(rows.length - 1);
 
-    fireEvent.input(slider!, { target: { value: "18" } });
+    fireEvent.input(slider!, { target: { value: String(minIndex + 10) } });
 
-    expect(slider).toHaveValue("18");
+    expect(slider).toHaveValue(String(minIndex + 10));
     expect(
-      screen.getAllByText("Now vs Model B from 18M ago").length,
-    ).toBeGreaterThan(0);
-    expect(screen.getAllByText("18M origin date").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Now vs Model A").length).toBeGreaterThan(0);
-    // The slider header names the start date it selects, e.g. "(2025-05-16)".
-    expect(
-      screen.getAllByText(/18 months ago \(\d{4}-\d{2}-\d{2}\)/).length,
-    ).toBeGreaterThan(0);
+      view.getByText(`Now vs Model B since ${rows[minIndex + 10].date}`),
+    ).toBeInTheDocument();
+    expect(view.getByText("Now vs Model A")).toBeInTheDocument();
   });
 });
 

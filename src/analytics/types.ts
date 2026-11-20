@@ -70,7 +70,6 @@ export type ForecastPoint = {
 };
 
 export type RandomWalkBacktestResult = {
-  lookbackMonths: number;
   originDate: string;
   latestDate: string;
   originIndex: number;

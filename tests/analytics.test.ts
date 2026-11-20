@@ -149,15 +149,14 @@ describe("market growth analytics", () => {
     );
   });
 
-  it("calculates a twelve-month random walk backtest from information at the origin", () => {
+  it("calculates a random walk backtest from information at the origin", () => {
     const rows = makeCompoundRows({ years: 4, annualReturn: 0.05 });
     const unjumpedLatest = rows[rows.length - 1].total_return_index;
     rows[rows.length - 1].total_return_index *= 1.2;
     const series = prepareMarketSeries(rows);
-    const backtest = generateRandomWalkBacktest(series, 12);
+    const backtest = generateRandomWalkBacktest(series, "2023-01-01");
 
     expect(backtest).not.toBeNull();
-    expect(backtest!.lookbackMonths).toBe(12);
     expect(backtest!.originDate).toBe("2023-01-01");
     expect(backtest!.expectedLatest).toBeCloseTo(unjumpedLatest, 8);
     expect(backtest!.actualLatest).toBeCloseTo(unjumpedLatest * 1.2, 8);
@@ -167,18 +166,28 @@ describe("market growth analytics", () => {
     expect(backtest!.inside95).toBe(false);
   });
 
-  it("selects the latest available origin not after the month lookback date", () => {
+  it("starts the backtest at the latest row on or before the requested date", () => {
     const series = prepareMarketSeries([
       { date: "2020-01-01", total_return_index: 100 },
       { date: "2021-01-01", total_return_index: 110 },
       { date: "2021-07-01", total_return_index: 115 },
       { date: "2022-01-01", total_return_index: 120 },
     ]);
-    const backtest = generateRandomWalkBacktest(series, 6);
+    const backtest = generateRandomWalkBacktest(series, "2021-09-15");
 
     expect(backtest).not.toBeNull();
-    expect(backtest!.lookbackMonths).toBe(6);
     expect(backtest!.originDate).toBe("2021-07-01");
+  });
+
+  it("has no backtest when the requested date is before the second row", () => {
+    const series = prepareMarketSeries([
+      { date: "2020-01-01", total_return_index: 100 },
+      { date: "2021-01-01", total_return_index: 110 },
+      { date: "2022-01-01", total_return_index: 120 },
+    ]);
+
+    expect(generateRandomWalkBacktest(series, "2020-06-01")).toBeNull();
+    expect(generateRandomWalkBacktest(series, "2019-01-01")).toBeNull();
   });
 });
 
